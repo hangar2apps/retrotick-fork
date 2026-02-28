@@ -308,11 +308,15 @@ function renderControlOverlay(
       const WM_COMMAND = 0x0111;
       const dlgWnd = emu.handles.get<WindowInfo>(ds.hwnd);
       const wndProc = dlgWnd?.wndProc || ds.dlgProc;
-      if (wndProc && !emu.isNE) {
-        // Win32: synchronously call dlgProc so the app can update state immediately
+      if (wndProc) {
         const savedEIP = emu.cpu.eip;
         const savedESP = emu.cpu.reg[4];
-        emu.callWndProc(wndProc, ds.hwnd, WM_COMMAND, ctrl.controlId, ctrl.childHwnd);
+        if (emu.isNE) {
+          // Win16: wParam = controlId, lParam = MAKELONG(hwndCtl, BN_CLICKED)
+          emu.callWndProc16(wndProc, ds.hwnd, WM_COMMAND, ctrl.controlId, ctrl.childHwnd & 0xFFFF);
+        } else {
+          emu.callWndProc(wndProc, ds.hwnd, WM_COMMAND, ctrl.controlId, ctrl.childHwnd);
+        }
         emu.cpu.eip = savedEIP;
         emu.cpu.reg[4] = savedESP;
         // Refresh overlays and trigger owner-draw repaint after state change

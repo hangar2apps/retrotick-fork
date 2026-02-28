@@ -244,14 +244,18 @@ function parseWin16DialogTemplate(data: Uint8Array): {
 }
 
 function showWin16Dialog(emu: Emulator, lpTemplate: number, hWndParent: number, dlgProc: number): number | undefined {
-  // lpTemplate is a far pointer to resource name/ID
-  // For integer resource IDs, it's typically just the ID value
-  const templateId = lpTemplate & 0xFFFF;
-
-  // Find the dialog resource in NE resources
-  const res = emu.ne?.resources.find(r => r.typeID === 5 && r.id === templateId);
+  // lpTemplate is either MAKEINTRESOURCE(id) (high word = 0) or a pointer to string name
+  let res;
+  if (lpTemplate < 0x10000) {
+    // Integer resource ID (MAKEINTRESOURCE)
+    res = emu.ne?.resources.find(r => r.typeID === 5 && r.id === lpTemplate);
+  } else {
+    // Pointer to string name
+    const templateName = emu.memory.readCString(lpTemplate);
+    res = emu.ne?.resources.find(r => r.typeID === 5 && r.name?.toUpperCase() === templateName.toUpperCase());
+  }
   if (!res) {
-    console.warn(`[WIN16] DialogBox: dialog template ${templateId} not found`);
+    console.warn(`[WIN16] DialogBox: dialog template ${lpTemplate < 0x10000 ? lpTemplate : emu.memory.readCString(lpTemplate)} not found`);
     return 0;
   }
 
@@ -265,11 +269,11 @@ function showWin16Dialog(emu: Emulator, lpTemplate: number, hWndParent: number, 
 
   const dlg = parseWin16DialogTemplate(data);
   if (!dlg) {
-    console.warn(`[WIN16] DialogBox: failed to parse dialog template ${templateId}`);
+    console.warn(`[WIN16] DialogBox: failed to parse dialog template ${res.name ?? res.id}`);
     return 0;
   }
 
-  console.log(`[WIN16] DialogBox template=${templateId} title="${dlg.title}" ${dlg.cx}x${dlg.cy} controls=${dlg.controls.length}`);
+  console.log(`[WIN16] DialogBox template=${res.name ?? res.id} title="${dlg.title}" ${dlg.cx}x${dlg.cy} controls=${dlg.controls.length}`);
 
   // Scale from dialog units to pixels (approximate: 1 DLU ≈ 1.5px horizontal, 1.75px vertical)
   const scaleX = 1.5, scaleY = 1.75;
@@ -374,10 +378,37 @@ function showWin16Dialog(emu: Emulator, lpTemplate: number, hWndParent: number, 
   emu._dialogResolve = (result: number) => {
     emu.waitingForMessage = false;
     emuCompleteThunk16(emu, result, stackBytes);
+    if (emu._dialogPumpTimer !== null) { clearInterval(emu._dialogPumpTimer); emu._dialogPumpTimer = null; }
     if (emu.running && !emu.halted) {
       requestAnimationFrame(emu.tick);
     }
   };
+
+  // Pump messages to the dialog proc so button clicks (WM_COMMAND) get delivered
+  emu._dialogPumpTimer = setInterval(() => {
+    const ds = emu.dialogState;
+    if (!ds || ds.ended || !emu._dialogResolve) {
+      if (emu._dialogPumpTimer !== null) { clearInterval(emu._dialogPumpTimer); emu._dialogPumpTimer = null; }
+      return;
+    }
+    const dlgWnd = emu.handles.get<WindowInfo>(ds.hwnd);
+    if (!dlgWnd?.wndProc) return;
+
+    const eipSave = emu.cpu.eip;
+    const espSave = emu.cpu.reg[4];
+    const savedWaiting = emu.waitingForMessage;
+    emu.waitingForMessage = false;
+
+    while (emu.messageQueue.length > 0) {
+      const msg = emu.messageQueue.shift()!;
+      emu.callWndProc16(dlgWnd.wndProc, msg.hwnd, msg.message, msg.wParam, msg.lParam);
+      emu.cpu.eip = eipSave;
+      emu.cpu.reg[4] = espSave;
+      if (ds.ended) return;
+    }
+
+    emu.waitingForMessage = savedWaiting;
+  }, 50);
 
   emu.onShowDialog?.(dialogInfo);
 

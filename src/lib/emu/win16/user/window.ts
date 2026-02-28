@@ -93,9 +93,12 @@ export function registerWin16UserWindow(emu: Emulator, user: Win16Module, h: Win
         cw = emu.canvas.width;
         ch = emu.canvas.height;
       }
+      const WM_SIZE = 0x0005;
       const lParam = ((ch & 0xFFFF) << 16) | (cw & 0xFFFF);
-      console.log(`[WIN16] ShowWindow sending WM_SIZE hwnd=0x${hWnd.toString(16)} cw=${cw} ch=${ch}`);
-      emu.callWndProc16(wnd.wndProc, hWnd, 0x0005, 0, lParam);
+      console.log(`[WIN16] ShowWindow posting WM_SIZE hwnd=0x${hWnd.toString(16)} cw=${cw} ch=${ch}`);
+      // Post instead of sync call so the browser can render the window before
+      // the WM_SIZE handler runs (which may contain lengthy animation loops).
+      emu.postMessage(hWnd, WM_SIZE, 0, lParam);
     }
     return wasVisible ? 1 : 0;
   });

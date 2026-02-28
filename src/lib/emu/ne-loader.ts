@@ -12,7 +12,8 @@ export interface NESegmentInfo {
 
 export interface NEResourceEntry {
   typeID: number;     // resource type (e.g. 2=RT_BITMAP, 6=RT_STRING, 4=RT_MENU)
-  id: number;         // resource ID (integer)
+  id: number;         // resource ID (integer, or 0 for string-named)
+  name?: string;      // resource name (for string-named resources)
   fileOffset: number; // absolute file offset
   length: number;     // data length in bytes
 }
@@ -160,9 +161,19 @@ export function loadNE(arrayBuffer: ArrayBuffer, memory: Memory): LoadedNE {
 
         const fileOffset = rnOffset << rscAlignShift;
         const length = rnLength << rscAlignShift;
-        const id = (rnID & 0x8000) ? (rnID & 0x7FFF) : rnID;
+        const entry: NEResourceEntry = { typeID, id: 0, fileOffset, length };
+        if (rnID & 0x8000) {
+          entry.id = rnID & 0x7FFF;
+        } else {
+          // String-named resource: rnID is offset from resource table start
+          const strPos = resTableBase + rnID;
+          const strLen = data[strPos];
+          let name = '';
+          for (let j = 0; j < strLen; j++) name += String.fromCharCode(data[strPos + 1 + j]);
+          entry.name = name;
+        }
 
-        resources.push({ typeID, id, fileOffset, length });
+        resources.push(entry);
       }
     }
     console.log(`[NE] Resources: ${resources.length} entries (types: ${[...new Set(resources.map(r => r.typeID))].join(', ')})`);

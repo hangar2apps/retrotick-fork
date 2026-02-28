@@ -692,8 +692,7 @@ export class Emulator {
     // This is what Windows does when the user clicks a button — the dialog proc
     // handles WM_COMMAND/IDOK, calls GetDlgItemInt/GetDlgItemText, then EndDialog.
     const ds = this.dialogState;
-    if (!ds.ended && !this.ne) {
-      // Win32: synchronously call the dlgProc with WM_COMMAND so it can call EndDialog
+    if (!ds.ended) {
       const dlgWnd = this.handles.get<WindowInfo>(ds.hwnd);
       const wndProc = dlgWnd?.wndProc || ds.dlgProc;
       if (wndProc) {
@@ -702,9 +701,14 @@ export class Emulator {
         const savedESP = this.cpu.reg[4];
         const savedWaiting = this.waitingForMessage;
         this.waitingForMessage = false;
-        // wParam = MAKEWPARAM(controlId, BN_CLICKED=0); lParam = button hwnd (0 if unknown)
         const buttonHwnd = dlgWnd?.children?.get(action) ?? 0;
-        this.callWndProc(wndProc, ds.hwnd, WM_COMMAND, action, buttonHwnd);
+        if (this.ne) {
+          // Win16: wParam = controlId, lParam = MAKELONG(hwndCtl, BN_CLICKED=0)
+          this.callWndProc16(wndProc, ds.hwnd, WM_COMMAND, action, buttonHwnd & 0xFFFF);
+        } else {
+          // Win32: wParam = MAKEWPARAM(controlId, BN_CLICKED=0); lParam = button hwnd
+          this.callWndProc(wndProc, ds.hwnd, WM_COMMAND, action, buttonHwnd);
+        }
         this.cpu.eip = savedEIP;
         this.cpu.reg[4] = savedESP;
         this.waitingForMessage = savedWaiting;

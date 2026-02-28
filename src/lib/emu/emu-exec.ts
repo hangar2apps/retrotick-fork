@@ -220,8 +220,18 @@ export function emuCallWndProc16(emu: Emulator, wndProc: number, hwnd: number, m
   const targetDepth = emu.wndProcDepth - 1;
   let steps = 0;
   const MAX_STEPS = 200000000;
+  const YIELD_MS = 40;
+  const startTime = performance.now();
 
   while (emu.wndProcDepth > targetDepth && !emu.halted && !emu.cpu.halted && steps < MAX_STEPS) {
+    // Yield to browser periodically so the UI stays responsive
+    if ((steps & 0xFFF) === 0 && steps > 0 && performance.now() - startTime > YIELD_MS) {
+      // Push frame so the tick loop continues executing this wndproc
+      emu._wndProcFrames.push(frame);
+      emu._wndProcSetupPending = true;
+      return undefined;
+    }
+
     const eip = emu.cpu.eip >>> 0;
     const thunk = emu.thunkPages.has(eip >>> 12) ? emu.thunkToApi.get(eip) : undefined;
     if (thunk) {
