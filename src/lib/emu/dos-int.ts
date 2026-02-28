@@ -1068,6 +1068,107 @@ function handleInt21(cpu: CPU, emu: Emulator): boolean {
       break;
     }
 
+    case 0x29: { // Parse Filename into FCB
+      const flags = cpu.getReg8(EAX); // AL = parsing flags
+      let si = (cpu.ds << 4) + cpu.getReg16(ESI);
+      const di = (cpu.es << 4) + cpu.getReg16(EDI);
+      const mem = cpu.mem;
+
+      // Skip leading separators if bit 0 set
+      if (flags & 1) {
+        while (si < mem.length) {
+          const ch = mem.readU8(si);
+          if (ch === 0x20 || ch === 0x09) { si++; } // space/tab
+          else break;
+        }
+      }
+
+      // Initialize FCB: drive=0, filename=spaces, extension=spaces
+      mem.writeU8(di, 0); // drive
+      for (let i = 1; i <= 8; i++) mem.writeU8(di + i, 0x20); // filename
+      for (let i = 9; i <= 11; i++) mem.writeU8(di + i, 0x20); // extension
+
+      let hasWild = false;
+      let pos = si;
+
+      // Check for drive letter
+      if (pos + 1 < mem.length && mem.readU8(pos + 1) === 0x3A) { // ':'
+        const drv = mem.readU8(pos);
+        const drvNum = (drv >= 0x61 ? drv - 0x60 : drv >= 0x41 ? drv - 0x40 : 0);
+        mem.writeU8(di, drvNum);
+        pos += 2;
+      }
+
+      // Parse filename (up to 8 chars)
+      let fnIdx = 0;
+      while (pos < mem.length && fnIdx < 8) {
+        const ch = mem.readU8(pos);
+        if (ch === 0 || ch === 0x0D || ch === 0x20 || ch === 0x09 || ch === 0x2E || ch === 0x2F || ch === 0x5C) break;
+        if (ch === 0x2A) { // '*' — fill rest with '?'
+          hasWild = true;
+          for (; fnIdx < 8; fnIdx++) mem.writeU8(di + 1 + fnIdx, 0x3F);
+          pos++;
+          break;
+        }
+        if (ch === 0x3F) hasWild = true;
+        mem.writeU8(di + 1 + fnIdx, ch >= 0x61 && ch <= 0x7A ? ch - 0x20 : ch);
+        fnIdx++;
+        pos++;
+      }
+
+      // Parse extension if '.' present
+      if (pos < mem.length && mem.readU8(pos) === 0x2E) {
+        pos++; // skip '.'
+        let extIdx = 0;
+        while (pos < mem.length && extIdx < 3) {
+          const ch = mem.readU8(pos);
+          if (ch === 0 || ch === 0x0D || ch === 0x20 || ch === 0x09 || ch === 0x2F || ch === 0x5C) break;
+          if (ch === 0x2A) {
+            hasWild = true;
+            for (; extIdx < 3; extIdx++) mem.writeU8(di + 9 + extIdx, 0x3F);
+            pos++;
+            break;
+          }
+          if (ch === 0x3F) hasWild = true;
+          mem.writeU8(di + 9 + extIdx, ch >= 0x61 && ch <= 0x7A ? ch - 0x20 : ch);
+          extIdx++;
+          pos++;
+        }
+      }
+
+      // Update DS:SI to point past parsed name
+      cpu.setReg16(ESI, pos & 0xFFFF);
+      // AL = 0 (no wildcards), 1 (wildcards found)
+      cpu.setReg8(EAX, hasWild ? 1 : 0);
+      break;
+    }
+
+    case 0x4B: { // EXEC — Load and Execute Program
+      // AL=00 Load+Execute, AL=01 Load overlay, AL=03 Load only
+      // DS:DX → ASCIZ program name, ES:BX → parameter block
+      const dsBase = cpu.segBase(cpu.ds);
+      const progName = cpu.mem.readCString(dsBase + cpu.getReg16(EDX));
+      // Parameter block at ES:BX: word envSeg, dword cmdTail, ...
+      const esBase = cpu.segBase(cpu.es);
+      const paramBlock = esBase + cpu.getReg16(EBX);
+      const cmdTailOfs = cpu.mem.readU16(paramBlock + 2);
+      const cmdTailSeg = cpu.mem.readU16(paramBlock + 4);
+      const cmdTailAddr = (cmdTailSeg << 4) + cmdTailOfs;
+      // Command tail: first byte = length, then the string
+      const cmdLen = cpu.mem.readU8(cmdTailAddr);
+      let cmdTail = '';
+      for (let i = 0; i < cmdLen; i++) {
+        const ch = cpu.mem.readU8(cmdTailAddr + 1 + i);
+        if (ch === 0x0D || ch === 0) break;
+        cmdTail += String.fromCharCode(ch);
+      }
+      console.warn(`[INT 21h] EXEC not supported: "${progName}" params="${cmdTail}" (AL=${al})`);
+      // Return "file not found"
+      cpu.setFlag(CF, true);
+      cpu.setReg16(EAX, 2); // ERROR_FILE_NOT_FOUND
+      break;
+    }
+
     default:
       console.warn(`[INT 21h] Unhandled AH=0x${ah.toString(16)} at EIP=0x${(cpu.eip >>> 0).toString(16)}`);
       cpu.setFlag(CF, true);
