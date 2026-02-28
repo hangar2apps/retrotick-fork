@@ -3,10 +3,12 @@ import type { WindowInfo } from './types';
 import { writeMsgStruct, getClientSize } from './_helpers';
 import { encodeMBCS } from '../../memory';
 import { emuCompleteThunk } from '../../emu-exec';
+import { getNextCascadePos } from '../../emulator';
 import {
   WM_QUIT, WM_PAINT, WM_ERASEBKGND,
   WM_SETTEXT, WM_GETTEXT, WM_GETTEXTLENGTH,
-  WM_TIMER, PM_REMOVE,
+  WM_CREATE, WM_NCCREATE, WM_NCCALCSIZE,
+  WM_TIMER, PM_REMOVE, CW_USEDEFAULT,
   TBM_GETPOS, TBM_GETRANGEMIN, TBM_GETRANGEMAX,
   TBM_SETPOS, TBM_SETRANGE, TBM_SETRANGEMIN, TBM_SETRANGEMAX,
 } from '../types';
@@ -264,9 +266,154 @@ export function registerMessage(emu: Emulator): void {
     return 1;
   });
 
+  const WM_MDICREATE = 0x0220;
+  const WM_MDIDESTROY = 0x0221;
+  const WM_MDIACTIVATE = 0x0222;
+  const WM_MDIGETACTIVE = 0x0229;
+  const WM_MDISETMENU = 0x0230;
+  const WM_MDITILE = 0x0226;
+  const WM_MDICASCADE = 0x0227;
+  const WM_MDIICONARRANGE = 0x0228;
+
   const handleBuiltinMessage = (hwnd: number, message: number, wParam: number, lParam: number, wide = false): number | null => {
     const wnd = emu.handles.get<WindowInfo>(hwnd);
     if (!wnd) return null;
+
+    // MDIClient message handling
+    const cls = (wnd.classInfo?.baseClassName || wnd.classInfo?.className || '').toUpperCase();
+    if (cls === 'MDICLIENT') {
+      if (message === WM_MDICREATE && lParam) {
+        // MDICREATESTRUCT: szClass(4), szTitle(4), hOwner(4), x(4), y(4), cx(4), cy(4), style(4), lParam(4)
+        const szClassPtr = emu.memory.readU32(lParam);
+        const szTitlePtr = emu.memory.readU32(lParam + 4);
+        const hOwner = emu.memory.readU32(lParam + 8);
+        let x = emu.memory.readI32(lParam + 12);
+        let y = emu.memory.readI32(lParam + 16);
+        let cx = emu.memory.readI32(lParam + 20);
+        let cy = emu.memory.readI32(lParam + 24);
+        let childStyle = emu.memory.readU32(lParam + 28);
+        const childLParam = emu.memory.readU32(lParam + 32);
+
+        const className = szClassPtr < 0x10000
+          ? (emu.atomToClassName.get(szClassPtr) || `#${szClassPtr}`)
+          : emu.memory.readUTF16String(szClassPtr);
+        const title = szTitlePtr ? emu.memory.readUTF16String(szTitlePtr) : '';
+
+        const childCls = emu.windowClasses.get(className) || emu.windowClasses.get(className.toUpperCase());
+        if (!childCls) {
+          console.warn(`[MDI] WM_MDICREATE: class not found: ${className}`);
+          return 0;
+        }
+
+        // MDI children are always WS_CHILD of the MDIClient
+        const WS_CHILD = 0x40000000;
+        const WS_CLIPSIBLINGS = 0x04000000;
+        const WS_VISIBLE = 0x10000000;
+        const WS_OVERLAPPEDWINDOW = 0x00CF0000;
+        childStyle |= WS_CHILD | WS_CLIPSIBLINGS | WS_VISIBLE | WS_OVERLAPPEDWINDOW;
+
+        // MDI children use parent (MDIClient) client area for default sizing
+        const mdiClientW = wnd.width || 320;
+        const mdiClientH = wnd.height || 240;
+        if (x === (CW_USEDEFAULT | 0)) {
+          const pos = getNextCascadePos(mdiClientW, mdiClientH);
+          x = pos.x; y = pos.y;
+          if ((cx | 0) === (CW_USEDEFAULT | 0) || cx === 0) cx = Math.max(200, mdiClientW - 40);
+          if ((cy | 0) === (CW_USEDEFAULT | 0) || cy === 0) cy = Math.max(150, mdiClientH - 40);
+        } else {
+          if ((cx | 0) === (CW_USEDEFAULT | 0)) cx = 320;
+          if ((cy | 0) === (CW_USEDEFAULT | 0)) cy = 240;
+        }
+
+        const childWnd: WindowInfo = {
+          hwnd: 0, classInfo: childCls,
+          wndProc: childCls.wndProc,
+          parent: hwnd, // parent is MDIClient
+          x, y, width: cx, height: cy,
+          style: childStyle, exStyle: 0, title,
+          visible: true, hMenu: 0,
+          extraBytes: new Uint8Array(Math.max(0, childCls.cbWndExtra)),
+          userData: 0,
+          ownerThreadId: emu.currentThread?.id,
+        };
+
+        const childHwnd = emu.handles.alloc('window', childWnd);
+        childWnd.hwnd = childHwnd;
+
+        // Register as child of MDIClient
+        if (!wnd.children) wnd.children = new Map();
+        if (!wnd.childList) wnd.childList = [];
+        wnd.childList.push(childHwnd);
+
+        // Track active MDI child
+        if (!(wnd as any).mdiActiveChild) (wnd as any).mdiActiveChild = 0;
+        (wnd as any).mdiActiveChild = childHwnd;
+
+        console.log(`[MDI] WM_MDICREATE class="${className}" title="${title}" hwnd=0x${childHwnd.toString(16)} size=${cx}x${cy}`);
+
+        // Build CREATESTRUCT and send WM_NCCREATE / WM_CREATE
+        const createStructAddr = emu.allocHeap(48);
+        emu.memory.writeU32(createStructAddr, lParam); // lpCreateParams = pointer to MDICREATESTRUCT
+        emu.memory.writeU32(createStructAddr + 4, hOwner);
+        emu.memory.writeU32(createStructAddr + 8, 0); // hMenu
+        emu.memory.writeU32(createStructAddr + 12, hwnd); // hwndParent = MDIClient
+        emu.memory.writeU32(createStructAddr + 16, cy);
+        emu.memory.writeU32(createStructAddr + 20, cx);
+        emu.memory.writeU32(createStructAddr + 24, y);
+        emu.memory.writeU32(createStructAddr + 28, x);
+        emu.memory.writeU32(createStructAddr + 32, childStyle);
+        emu.memory.writeU32(createStructAddr + 36, szTitlePtr);
+        emu.memory.writeU32(createStructAddr + 40, szClassPtr);
+        emu.memory.writeU32(createStructAddr + 44, 0); // exStyle
+
+        // Fire CBT hooks
+        if (emu.cbtHooks.length > 0) {
+          const cbtStruct = emu.allocHeap(8);
+          emu.memory.writeU32(cbtStruct, createStructAddr);
+          emu.memory.writeU32(cbtStruct + 4, 0);
+          for (const hook of emu.cbtHooks) {
+            emu.callWndProc(hook.lpfn, 3, childHwnd, cbtStruct, 0);
+          }
+        }
+
+        emu.callWndProc(childWnd.wndProc, childHwnd, WM_NCCREATE, 0, createStructAddr);
+        emu.callWndProc(childWnd.wndProc, childHwnd, WM_NCCALCSIZE, 0, 0);
+        const createResult = emu.callWndProc(childWnd.wndProc, childHwnd, WM_CREATE, 0, createStructAddr);
+        console.log(`[MDI] WM_CREATE result=${createResult} for hwnd=0x${childHwnd.toString(16)} class="${className}"`);
+
+        if (createResult === -1) {
+          emu.handles.free(childHwnd);
+          if (wnd.childList) {
+            const idx = wnd.childList.indexOf(childHwnd);
+            if (idx >= 0) wnd.childList.splice(idx, 1);
+          }
+          (wnd as any).mdiActiveChild = 0;
+          return 0;
+        }
+
+        return childHwnd;
+      }
+
+      if (message === WM_MDIGETACTIVE) {
+        // Return active MDI child HWND; if lParam points to a BOOL, write maximized state
+        const activeChild = (wnd as any).mdiActiveChild || 0;
+        if (lParam) {
+          emu.memory.writeU32(lParam, 0); // not maximized
+        }
+        return activeChild;
+      }
+
+      if (message === WM_MDIACTIVATE) {
+        (wnd as any).mdiActiveChild = wParam;
+        return 0;
+      }
+
+      if (message === WM_MDIDESTROY || message === WM_MDITILE ||
+          message === WM_MDICASCADE || message === WM_MDIICONARRANGE ||
+          message === WM_MDISETMENU) {
+        return 0; // stub
+      }
+    }
 
     if (message === WM_SETTEXT && lParam) {
       const newTitle = wide ? emu.memory.readUTF16String(lParam) : emu.memory.readCString(lParam);

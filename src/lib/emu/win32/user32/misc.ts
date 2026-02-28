@@ -16,6 +16,12 @@ interface DeferWindowPosInfo { entries: DeferWindowPosEntry[] }
 export function registerMisc(emu: Emulator): void {
   const user32 = emu.registerDll('USER32.DLL');
 
+  // GetDoubleClickTime() — returns milliseconds
+  user32.register('GetDoubleClickTime', 0, () => 500);
+
+  // DragObject(hwndParent, hwndFrom, wFmt, dwData, hcur) — 5 args
+  user32.register('DragObject', 5, () => 0);
+
   // System metrics
   user32.register('GetSystemMetrics', 1, () => {
     const idx = emu.readArg(0);

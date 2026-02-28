@@ -85,8 +85,20 @@ export function buildThunkTable(emu: Emulator): void {
 
 export function preloadStrings(emu: Emulator): void {
   const strings = extractStrings(emu.peInfo, emu.arrayBuffer);
+  // Track which language each string came from; prefer English (0x09) or neutral (0x00)
+  const langMap = new Map<number, number>(); // id → languageId
   for (const s of strings) {
+    const prevLang = langMap.get(s.id);
+    if (prevLang !== undefined) {
+      const prevPrimary = prevLang & 0x3FF;
+      const curPrimary = (s.languageId || 0) & 0x3FF;
+      // Skip if we already have English and this isn't English
+      if (prevPrimary === 0x09 && curPrimary !== 0x09) continue;
+      // Skip if we already have neutral and this isn't English or neutral
+      if (prevPrimary === 0x00 && curPrimary !== 0x09 && curPrimary !== 0x00) continue;
+    }
     emu.stringCache.set(s.id, s.string);
+    langMap.set(s.id, s.languageId || 0);
   }
 }
 

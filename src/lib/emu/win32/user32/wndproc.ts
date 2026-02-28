@@ -195,6 +195,18 @@ export function registerWndProc(emu: Emulator): void {
   user32.register('SetWindowsHookExA', 4, setWindowsHookEx);
   user32.register('SetWindowsHookExW', 4, setWindowsHookEx);
 
+  // SetWindowsHookW(idHook, lpfn) — old deprecated API, 2 args
+  user32.register('SetWindowsHookW', 2, () => {
+    const idHook = emu.readArg(0);
+    const lpfn = emu.readArg(1);
+    const hookData = { idHook, lpfn, hMod: 0 };
+    if (idHook === 5) {
+      emu.cbtHooks.push({ lpfn, hMod: 0 });
+      console.log(`[HOOK] Registered WH_CBT hook (old API) lpfn=0x${lpfn.toString(16)}`);
+    }
+    return emu.handles.alloc('hook', hookData);
+  });
+
   user32.register('UnhookWindowsHookEx', 1, () => {
     const hHook = emu.readArg(0);
     const hookData = emu.handles.get<{ idHook: number; lpfn: number; hMod: number }>(hHook);

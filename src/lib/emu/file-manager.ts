@@ -376,6 +376,14 @@ export class DefaultFileManager implements FileManager {
       }
     }
 
+    // Always include "." and ".." for wildcard directory listings
+    if (filePat === '*.*' || filePat === '*') {
+      const hasDot = results.some(e => e.name === '.');
+      const hasDotDot = results.some(e => e.name === '..');
+      if (!hasDot) results.unshift({ name: '.', size: 0, isDir: true });
+      if (!hasDotDot) results.splice(1, 0, { name: '..', size: 0, isDir: true });
+    }
+
     return results;
   }
 

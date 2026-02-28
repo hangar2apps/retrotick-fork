@@ -1118,4 +1118,48 @@ export function registerFile(emu: Emulator): void {
   kernel32.register('LockFile', 5, () => 1);
 
   kernel32.register('OpenFileMappingA', 3, () => 0);
+
+  // SetFilePointerEx(hFile, liDistanceToMove_lo, liDistanceToMove_hi, lpNewFilePointer, dwMoveMethod) — 5 args
+  kernel32.register('SetFilePointerEx', 5, () => 0);
+
+  // FindFirstFileExA(lpFileName, fInfoLevelId, lpFindFileData, fSearchOp, lpSearchFilter, dwAdditionalFlags) — 6 args
+  kernel32.register('FindFirstFileExA', 6, () => 0xFFFFFFFF); // INVALID_HANDLE_VALUE
+
+  // FindFirstFileExW — 6 args
+  kernel32.register('FindFirstFileExW', 6, () => 0xFFFFFFFF);
+
+  // CreateDirectoryExW(lpTemplateDirectory, lpNewDirectory, lpSecurityAttributes) — 3 args
+  kernel32.register('CreateDirectoryExW', 3, () => 0); // fail
+
+  // VerLanguageNameW(wLang, szLang, cchLang) — 3 args
+  kernel32.register('VerLanguageNameW', 3, () => {
+    const szLang = emu.readArg(1);
+    const cchLang = emu.readArg(2);
+    const name = 'English (United States)';
+    if (szLang && cchLang > 0) {
+      const len = Math.min(name.length, cchLang - 1);
+      for (let i = 0; i < len; i++) emu.memory.writeU16(szLang + i * 2, name.charCodeAt(i));
+      emu.memory.writeU16(szLang + len * 2, 0);
+      return len;
+    }
+    return 0;
+  });
+
+  // GetCompressedFileSizeW(lpFileName, lpFileSizeHigh) — 2 args
+  kernel32.register('GetCompressedFileSizeW', 2, () => 0xFFFFFFFF); // INVALID_FILE_SIZE
+
+  // FindCloseChangeNotification(hChangeHandle) — 1 arg
+  kernel32.register('FindCloseChangeNotification', 1, () => 1);
+
+  // FindNextChangeNotification(hChangeHandle) — 1 arg
+  kernel32.register('FindNextChangeNotification', 1, () => 1);
+
+  // FindFirstChangeNotificationW(lpPathName, bWatchSubtree, dwNotifyFilter) — 3 args
+  kernel32.register('FindFirstChangeNotificationW', 3, () => 0xFFFFFFFF); // INVALID_HANDLE_VALUE
+
+  // CreateHardLinkW(lpFileName, lpExistingFileName, lpSecurityAttributes) — 3 args
+  kernel32.register('CreateHardLinkW', 3, () => 0); // fail
+
+  // CopyFileExW(lpExistingFileName, lpNewFileName, lpProgressRoutine, lpData, pbCancel, dwCopyFlags) — 6 args
+  kernel32.register('CopyFileExW', 6, () => 0); // fail
 }

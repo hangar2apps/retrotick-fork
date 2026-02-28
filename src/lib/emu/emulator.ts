@@ -585,6 +585,10 @@ export class Emulator {
     console.log('=== END EIP TRACE ===');
   }
 
+  // Screen dirty flag — set by GDI draw ops that write to screen DC,
+  // checked by tick() to yield to browser for rendering intermediate frames
+  screenDirty = false;
+
   // Resource caches
   stringCache = new Map<number, string>();
   bitmapCache = new Map<number, number>();

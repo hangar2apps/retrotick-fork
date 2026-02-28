@@ -157,4 +157,19 @@ export function registerShell32(emu: Emulator): void {
   shell32.register('PathRemoveBlanksA', 1, () => 0); // no-op
   // ShellMessageBoxA is WINAPIV (cdecl, caller cleans stack) so stackBytes=0 is correct
   shell32.register('ShellMessageBoxA', 0, () => 1); // return IDOK
+
+  // ExtractIconExW(lpszFile, nIconIndex, phiconLarge, phiconSmall, nIcons) — 5 args
+  shell32.register('ExtractIconExW', 5, () => 0);
+
+  // SHFormatDrive(hwnd, drive, fmtID, options) — 4 args
+  shell32.register('SHFormatDrive', 4, () => -1); // SHFMT_ERROR
+
+  // ord_42 = SHFileOperationW (undocumented ordinal) — 1 arg (pointer to SHFILEOPSTRUCT)
+  shell32.register('ord_42', 1, () => 0);
+
+  // ord_66 = SHDefExtractIconW — 6 args
+  shell32.register('ord_66', 6, () => 1); // S_FALSE = no icon
+
+  // ord_680 = IsUserAnAdmin — 0 args
+  shell32.register('ord_680', 0, () => 1); // yes, admin
 }

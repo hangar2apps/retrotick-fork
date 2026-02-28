@@ -869,8 +869,7 @@ export function registerDialog(emu: Emulator): void {
       const w = data as WindowInfo;
       if (w.parent === hwndDlg && w.controlId === controlId) return handle;
     }
-    // Last resort: pseudo-handle
-    return ((hwndDlg & 0xFFFF) << 16) | (controlId & 0xFFFF);
+    return 0; // child not found
   });
 
   user32.register('GetDlgCtrlID', 1, () => {

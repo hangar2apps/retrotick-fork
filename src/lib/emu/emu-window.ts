@@ -277,9 +277,11 @@ export function releaseChildDC(emu: Emulator, hdc: number): void {
   }
 }
 
-export function syncDCToCanvas(_emu: Emulator, _hdc: number): void {
+export function syncDCToCanvas(emu: Emulator, _hdc: number): void {
   // Window DCs draw directly to the main canvas — nothing to sync
   // Memory DCs are OffscreenCanvas which need explicit BitBlt
+  // Mark screen as dirty so tick() can yield for browser rendering
+  emu.screenDirty = true;
 }
 
 // Dispatch to the next SEH handler in the chain

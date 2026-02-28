@@ -93,4 +93,24 @@ export function registerOleaut32(emu: Emulator): void {
     }
     return 0; // S_OK
   });
+
+  // ord_94 = VarFormatNumber — 7 args
+  oleaut32.register('ord_94', 7, () => 0x80004001); // E_NOTIMPL
+
+  // ord_185 = SysAllocStringByteLen(psz, len) — 2 args
+  oleaut32.register('ord_185', 2, () => {
+    const psz = emu.readArg(0);
+    const len = emu.readArg(1);
+    // Allocate BSTR: 4 byte length prefix + string data + 2 byte null
+    const ptr = emu.heapAlloc(4 + len + 2);
+    if (!ptr) return 0;
+    emu.memory.writeU32(ptr, len);
+    if (psz) {
+      for (let i = 0; i < len; i++) {
+        emu.memory.writeU8(ptr + 4 + i, emu.memory.readU8(psz + i));
+      }
+    }
+    emu.memory.writeU16(ptr + 4 + len, 0);
+    return ptr + 4; // BSTR points past the length prefix
+  });
 }

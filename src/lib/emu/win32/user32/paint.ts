@@ -278,6 +278,9 @@ export function registerPaint(emu: Emulator): void {
   user32.register('DrawFrameControl', 4, () => 1);
   user32.register('DrawFocusRect', 2, () => 1);
   user32.register('DrawIcon', 4, () => 1);
+
+  // DrawIconEx(hdc, xLeft, yTop, hIcon, cxWidth, cyWidth, istepIfAniCur, hbrFlickerFreeDraw, diFlags)
+  user32.register('DrawIconEx', 9, () => 1);
   user32.register('DrawAnimatedRects', 4, () => 1);
 
   user32.register('CreateCursor', 7, () => emu.handles.alloc('cursor', {}));

@@ -396,7 +396,11 @@ export function emuTick(emu: Emulator): void {
 
   for (let i = 0; i < BATCH_SIZE; i++) {
     if (emu.halted || emu.waitingForMessage || emu._dosHalted) break;
-    if ((i & 0xFFF) === 0 && i > 0 && performance.now() - tickStart > tickMs) break;
+    if ((i & 0xFFF) === 0 && i > 0) {
+      if (performance.now() - tickStart > tickMs) break;
+      // Yield after screen draws so browser can render intermediate frames
+      if (emu.screenDirty) { emu.screenDirty = false; break; }
+    }
 
     // DOS timer interrupt (INT 08h, ~18.2 Hz = every ~55ms)
     if (emu.isDOS && emu._pendingHwInts.length === 0) {

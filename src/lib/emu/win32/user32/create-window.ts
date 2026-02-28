@@ -52,15 +52,18 @@ export function registerCreateWindow(emu: Emulator): void {
       return 0;
     }
 
-    // Handle CW_USEDEFAULT
-    if ((width | 0) === (CW_USEDEFAULT | 0)) width = 320;
-    if ((height | 0) === (CW_USEDEFAULT | 0)) height = 240;
-    if (x === (CW_USEDEFAULT | 0) || y === (CW_USEDEFAULT | 0)) {
-      // Only advance cascade for app-registered window classes (wndProc !== 0),
-      // not built-in control classes (EDIT, BUTTON, STATIC, etc.)
+    // Handle CW_USEDEFAULT — when x is CW_USEDEFAULT for an overlapped window,
+    // Windows uses defaults for all of x, y, width, height
+    if (x === (CW_USEDEFAULT | 0) && !(style & 0x40000000)) {
       const pos = cls.wndProc ? getNextCascadePos(emu.screenWidth, emu.screenHeight) : { x: 0, y: 0 };
-      if (x === (CW_USEDEFAULT | 0)) x = pos.x;
-      if (y === (CW_USEDEFAULT | 0)) y = pos.y;
+      x = pos.x;
+      y = y === (CW_USEDEFAULT | 0) ? pos.y : y;
+      if ((width | 0) === (CW_USEDEFAULT | 0) || width === 0) width = 320;
+      if ((height | 0) === (CW_USEDEFAULT | 0) || height === 0) height = 240;
+    } else {
+      if ((width | 0) === (CW_USEDEFAULT | 0)) width = 320;
+      if ((height | 0) === (CW_USEDEFAULT | 0)) height = 240;
+      if (y === (CW_USEDEFAULT | 0)) y = 0;
     }
 
 
@@ -182,12 +185,19 @@ export function registerCreateWindow(emu: Emulator): void {
       return 0;
     }
 
-    if ((width | 0) === (CW_USEDEFAULT | 0)) width = 320;
-    if ((height | 0) === (CW_USEDEFAULT | 0)) height = 240;
-    if (x === (CW_USEDEFAULT | 0) || y === (CW_USEDEFAULT | 0)) {
+    // Handle CW_USEDEFAULT — when x is CW_USEDEFAULT for an overlapped window,
+    // Windows uses defaults for all of x, y, width, height
+    const WS_CHILD = 0x40000000;
+    if (x === (CW_USEDEFAULT | 0) && !(style & WS_CHILD)) {
       const pos = cls.wndProc ? getNextCascadePos(emu.screenWidth, emu.screenHeight) : { x: 0, y: 0 };
-      if (x === (CW_USEDEFAULT | 0)) x = pos.x;
-      if (y === (CW_USEDEFAULT | 0)) y = pos.y;
+      x = pos.x;
+      y = y === (CW_USEDEFAULT | 0) ? pos.y : y;
+      if ((width | 0) === (CW_USEDEFAULT | 0) || width === 0) width = 320;
+      if ((height | 0) === (CW_USEDEFAULT | 0) || height === 0) height = 240;
+    } else {
+      if ((width | 0) === (CW_USEDEFAULT | 0)) width = 320;
+      if ((height | 0) === (CW_USEDEFAULT | 0)) height = 240;
+      if (y === (CW_USEDEFAULT | 0)) y = 0;
     }
 
 

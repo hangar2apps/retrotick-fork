@@ -116,4 +116,11 @@ export function registerOle32(emu: Emulator): void {
     }
     return 0;
   });
+
+  // OleGetClipboard(ppDataObj) — 1 arg
+  ole32.register('OleGetClipboard', 1, () => {
+    const ppDataObj = emu.readArg(0);
+    if (ppDataObj) emu.memory.writeU32(ppDataObj, 0);
+    return 0x80004005; // E_FAIL
+  });
 }

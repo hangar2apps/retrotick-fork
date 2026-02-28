@@ -54,7 +54,10 @@ export function registerProfile(emu: Emulator): void {
   kernel32.register('WriteProfileStringA', 3, () => 1);
   kernel32.register('WriteProfileStringW', 3, () => 1); // pretend success
 
-  kernel32.register('GetPrivateProfileIntA', 4, () => 0);
+  kernel32.register('GetPrivateProfileIntA', 4, () => {
+    // Return default value (arg 2)
+    return emu.readArg(2);
+  });
 
   kernel32.register('GetPrivateProfileIntW', 4, () => {
     // Return default value (arg 2)

@@ -271,4 +271,7 @@ export function registerComctl32(emu: Emulator): void {
     }
     return hwnd;
   });
+
+  // MenuHelp(uMsg, wParam, lParam, hMainMenu, hInst, hwndStatus, lpwIDs) — 7 args
+  comctl32.register('MenuHelp', 7, () => {});
 }

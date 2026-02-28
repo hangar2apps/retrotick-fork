@@ -24,6 +24,7 @@ import { registerDdraw } from './win32/ddraw';
 import { registerShlwapi } from './win32/shlwapi';
 import { registerPsapi } from './win32/psapi';
 import { registerIphlpapi } from './win32/iphlpapi';
+import { registerSecur32 } from './win32/secur32';
 import { registerWin16Kernel, registerWin16User, registerWin16Gdi, registerWin16Shell, registerWin16Ddeml, registerWin16Mmsystem, registerWin16Commdlg, registerWin16Keyboard, registerWin16Win87em } from './win16/index';
 import { buildThunkTable, preloadStrings, verifyIAT, initTEB, initThreadTEB } from './emu-thunks-pe';
 import { Thread } from './thread';
@@ -309,6 +310,7 @@ export function emuLoad(emu: Emulator, arrayBuffer: ArrayBuffer, peInfo: PEInfo,
   registerShlwapi(emu);
   registerPsapi(emu);
   registerIphlpapi(emu);
+  registerSecur32(emu);
 
   // MSIMG32 stubs
   const msimg32 = emu.registerDll('MSIMG32.DLL');
@@ -1249,13 +1251,20 @@ function findResourceInDir(emu: Emulator, imageBase: number, resRva: number, typ
         };
       }
 
-      // Level 3: Language
+      // Level 3: Language — prefer English (0x0409) or neutral (0x0000), fallback to first
       const dir3 = base + (off2 & 0x7FFFFFFF);
       const numNamed3 = emu.memory.readU16(dir3 + 12);
       const numId3 = emu.memory.readU16(dir3 + 14);
+      const totalLangs = numNamed3 + numId3;
 
-      if (numNamed3 + numId3 > 0) {
-        const off3 = emu.memory.readU32(dir3 + 16 + 4);
+      if (totalLangs > 0) {
+        let bestIdx = 0; // default to first entry
+        for (let k = 0; k < totalLangs; k++) {
+          const langId = emu.memory.readU32(dir3 + 16 + k * 8);
+          if (langId === 0x0409 || (langId & 0x3FF) === 0x09) { bestIdx = k; break; } // English
+          if (langId === 0) { bestIdx = k; } // neutral
+        }
+        const off3 = emu.memory.readU32(dir3 + 16 + bestIdx * 8 + 4);
         if (off3 & 0x80000000) continue;
 
         const dataEntry = base + off3;
