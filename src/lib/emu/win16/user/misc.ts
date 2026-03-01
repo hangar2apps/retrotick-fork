@@ -45,7 +45,7 @@ export function registerWin16UserMisc(emu: Emulator, user: Win16Module, h: Win16
   user.register('ord_10', 10, () => {
     const [hWnd, nIDEvent, uElapse, lpTimerFunc] = emu.readPascalArgs16([2, 2, 2, 4]);
     console.log(`[WIN16] SetTimer hwnd=0x${hWnd.toString(16)} id=${nIDEvent} elapse=${uElapse} timerFunc=0x${lpTimerFunc.toString(16)}`);
-    const jsTimer = window.setInterval(() => {
+    const jsTimer = setInterval(() => {
       emu.postMessage(hWnd, 0x0113, nIDEvent, lpTimerFunc);
     }, uElapse);
     emu.setWin32Timer(hWnd, nIDEvent, jsTimer);
@@ -323,7 +323,7 @@ export function registerWin16UserMisc(emu: Emulator, user: Win16Module, h: Win16
       // Write WNDCLASS16 struct: style(2), wndProc(4), cbClsExtra(2), cbWndExtra(2),
       // hInstance(2), hIcon(2), hCursor(2), hbrBackground(2), lpszMenuName(4), lpszClassName(4)
       emu.memory.writeU16(lpWndClass, cls.style || 0);
-      emu.memory.writeU32(lpWndClass + 2, cls.wndProc || 0);
+      emu.memory.writeU32(lpWndClass + 2, (cls as any).rawWndProc || cls.wndProc || 0);
       emu.memory.writeU16(lpWndClass + 6, cls.cbClsExtra || 0);
       emu.memory.writeU16(lpWndClass + 8, cls.cbWndExtra || 0);
       emu.memory.writeU16(lpWndClass + 10, cls.hInstance || hInstance);
@@ -498,6 +498,107 @@ export function registerWin16UserMisc(emu: Emulator, user: Win16Module, h: Win16
   });
 
   // ───────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────────────────────────────────────
+  // Ordinal 421: wvsprintf(lpOutput, lpFormat, lpArgList) — 12 bytes
+  // Like wsprintf but takes a far pointer to the varargs instead of inline args
+  // ───────────────────────────────────────────────────────────────────────────
+  user.register('ord_421', 12, () => {
+    const [lpOutputFar, lpFormatFar, lpArgListFar] = emu.readPascalArgs16([4, 4, 4]);
+    const lpOutput = emu.resolveFarPtr(lpOutputFar);
+    const lpFormat = emu.resolveFarPtr(lpFormatFar);
+    const argBase = emu.resolveFarPtr(lpArgListFar);
+    const fmt = emu.memory.readCString(lpFormat);
+
+    let argOff = 0;
+    let result = '';
+    let fi = 0;
+
+    const read16 = (): number => { const v = emu.memory.readU16(argBase + argOff); argOff += 2; return v; };
+    const read32 = (): number => { const v = emu.memory.readU16(argBase + argOff) | (emu.memory.readU16(argBase + argOff + 2) << 16); argOff += 4; return v; };
+
+    while (fi < fmt.length) {
+      if (fmt[fi] !== '%' || fi + 1 >= fmt.length) { result += fmt[fi++]; continue; }
+      fi++;
+
+      let flagMinus = false, flagZero = false, flagPlus = false, flagSpace = false, flagHash = false;
+      for (;;) {
+        const ch = fmt[fi];
+        if (ch === '-') flagMinus = true;
+        else if (ch === '+') flagPlus = true;
+        else if (ch === '0') flagZero = true;
+        else if (ch === ' ') flagSpace = true;
+        else if (ch === '#') flagHash = true;
+        else break;
+        fi++;
+      }
+
+      let width = 0;
+      while (fi < fmt.length && fmt[fi] >= '0' && fmt[fi] <= '9') {
+        width = width * 10 + (fmt.charCodeAt(fi) - 48); fi++;
+      }
+
+      let precision = -1;
+      if (fi < fmt.length && fmt[fi] === '.') {
+        fi++; precision = 0;
+        while (fi < fmt.length && fmt[fi] >= '0' && fmt[fi] <= '9') {
+          precision = precision * 10 + (fmt.charCodeAt(fi) - 48); fi++;
+        }
+      }
+
+      let isLong = false;
+      if (fi < fmt.length && fmt[fi] === 'l') { isLong = true; fi++; }
+      else if (fi < fmt.length && fmt[fi] === 'h') { fi++; }
+
+      if (fi >= fmt.length) break;
+      const spec = fmt[fi++];
+      if (spec === '%') { result += '%'; continue; }
+
+      let val = '', isNeg = false;
+      switch (spec) {
+        case 'd': case 'i': {
+          if (isLong) { const n = read32() | 0; isNeg = n < 0; val = Math.abs(n).toString(); }
+          else { const n = (read16() << 16) >> 16; isNeg = n < 0; val = Math.abs(n).toString(); }
+          break;
+        }
+        case 'u': val = (isLong ? read32() >>> 0 : read16()).toString(); break;
+        case 'x': case 'X': {
+          const n = isLong ? read32() >>> 0 : read16();
+          val = n.toString(16); if (spec === 'X') val = val.toUpperCase();
+          if (flagHash && n !== 0) val = (spec === 'X' ? '0X' : '0x') + val;
+          break;
+        }
+        case 's': {
+          const ptr = emu.resolveFarPtr(read32());
+          val = ptr ? emu.memory.readCString(ptr) : '(null)';
+          if (precision >= 0 && val.length > precision) val = val.slice(0, precision);
+          break;
+        }
+        case 'c': val = String.fromCharCode(read16() & 0xFF); break;
+        default: result += '%' + spec; continue;
+      }
+
+      let sign = '';
+      if ((spec === 'd' || spec === 'i') && isNeg) sign = '-';
+      else if ((spec === 'd' || spec === 'i') && flagPlus) sign = '+';
+      else if ((spec === 'd' || spec === 'i') && flagSpace) sign = ' ';
+
+      const totalLen = sign.length + val.length;
+      if (width > totalLen) {
+        const padLen = width - totalLen;
+        if (flagMinus) result += sign + val + ' '.repeat(padLen);
+        else if (flagZero) result += sign + '0'.repeat(padLen) + val;
+        else result += ' '.repeat(padLen) + sign + val;
+      } else {
+        result += sign + val;
+      }
+    }
+
+    emu.memory.writeCString(lpOutput, result);
+    console.log(`[WIN16] wvsprintf → "${result}"`);
+    return result.length;
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
   // Ordinal 430: lstrcmp(s1, s2) — 8 bytes (4+4)
   // ───────────────────────────────────────────────────────────────────────────
   user.register('ord_430', 8, () => {
@@ -649,7 +750,17 @@ export function registerWin16UserMisc(emu: Emulator, user: Win16Module, h: Win16
   user.register('ord_121', 6, () => 0);
 
   // Ordinal 122: CallWindowProc(lpPrevWndFunc, hWnd, Msg, wParam, lParam) — 14 bytes (4+2+2+2+4)
-  user.register('ord_122', 14, () => 0);
+  user.register('ord_122', 14, () => {
+    const [lpPrevWndFunc, hWnd, msg, wParam, lParam] = emu.readPascalArgs16([4, 2, 2, 2, 4]);
+    const resolved = emu.resolveFarPtr(lpPrevWndFunc);
+    console.log(`[WIN16] CallWindowProc(0x${lpPrevWndFunc.toString(16)}→0x${resolved.toString(16)}, hwnd=0x${hWnd.toString(16)}, msg=0x${msg.toString(16)}, wP=0x${wParam.toString(16)}, lP=0x${lParam.toString(16)})`);
+    if (resolved) {
+      const result = emu.callWndProc16(resolved, hWnd, msg, wParam, lParam);
+      console.log(`[WIN16] CallWindowProc result=0x${(result??0).toString(16)}`);
+      return result;
+    }
+    return 0;
+  });
 
   // Ordinal 129: GetClassWord(hWnd, nIndex) — 4 bytes (2+2)
   user.register('ord_129', 4, () => 0);

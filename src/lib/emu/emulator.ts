@@ -547,50 +547,6 @@ export class Emulator {
 
   drawItemStructAddr = 0;
 
-  // Trace ring buffer
-  _traceEnabled = true;
-  private _traceBuffer: string[] = [];
-  private _traceIdx = 0;
-  private readonly _traceSize = 1024;
-
-  // EIP ring buffer
-  _eipRing = new Uint32Array(131072); // power of 2 for bitmask indexing
-  _eipRingIdx = 0;
-  _eipRingFull = false;
-
-  trace(msg: string): void {
-    if (this._traceBuffer.length < this._traceSize) {
-      this._traceBuffer.push(msg);
-    } else {
-      this._traceBuffer[this._traceIdx] = msg;
-    }
-    this._traceIdx = (this._traceIdx + 1) % this._traceSize;
-  }
-
-  dumpTrace(): void {
-    console.log('=== THUNK TRACE (oldest first) ===');
-    const len = this._traceBuffer.length;
-    const start = len < this._traceSize ? 0 : this._traceIdx;
-    for (let i = 0; i < len; i++) {
-      console.log(this._traceBuffer[(start + i) % len]);
-    }
-    console.log('=== END THUNK TRACE ===');
-
-    const ringLen = this._eipRingFull ? this._eipRing.length : this._eipRingIdx;
-    const ringStart = this._eipRingFull ? this._eipRingIdx : 0;
-    console.log(`=== EIP TRACE (last ${ringLen} instructions) ===`);
-    const eips: number[] = [];
-    for (let i = 0; i < ringLen; i++) {
-      eips.push(this._eipRing[(ringStart + i) % this._eipRing.length]);
-    }
-    const last50 = eips.slice(-50);
-    for (const eip of last50) {
-      const b: string[] = [];
-      for (let j = 0; j < 6; j++) b.push(this.memory.readU8((eip + j) >>> 0).toString(16).padStart(2, '0'));
-      console.log(`  0x${eip.toString(16)}: ${b.join(' ')}`);
-    }
-    console.log('=== END EIP TRACE ===');
-  }
 
   // Screen dirty flag — set by GDI draw ops that write to screen DC,
   // checked by tick() to yield to browser for rendering intermediate frames

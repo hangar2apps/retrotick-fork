@@ -55,7 +55,6 @@ export function emuCallWndProc(emu: Emulator, wndProc: number, hwnd: number, mes
       return 0;
     }
   }
-  emu.trace(`WNDPROC 0x${wndProc.toString(16)} msg=0x${message.toString(16)} hwnd=0x${hwnd.toString(16)} depth=${emu.wndProcDepth}`);
   emu.wndProcDepth++;
 
   // Save callee-saved registers
@@ -482,18 +481,6 @@ export function emuTick(emu: Emulator): void {
       const key = `${thunk.dll}:${thunk.name}`;
       const handler = emu.apiDefs.get(key)?.handler;
 
-      // Trace thunk calls (only when trace buffer is active)
-      if (emu._traceEnabled) {
-        let traceRetAddr: number;
-        if (emu.isNE) {
-          const ssBase = emu.cpu.segBase(emu.cpu.ss);
-          const sp = emu.cpu.reg[4] & 0xFFFF;
-          traceRetAddr = emu.memory.readU16((ssBase + sp) >>> 0) | (emu.memory.readU16((ssBase + sp + 2) >>> 0) << 16);
-        } else {
-          traceRetAddr = emu.memory.readU32(emu.cpu.reg[4] >>> 0);
-        }
-        emu.trace(`THUNK ${key} retAddr=0x${(traceRetAddr >>> 0).toString(16)} ESP=0x${(emu.cpu.reg[4] >>> 0).toString(16)} stackBytes=${thunk.stackBytes}`);
-      }
       const origESP = emu.cpu.reg[4] + thunk.stackBytes + 4;
 
       if (handler) {
@@ -555,11 +542,6 @@ export function emuTick(emu: Emulator): void {
     }
 
     const prevEip = eip;
-    if (emu._traceEnabled) {
-      emu._eipRing[emu._eipRingIdx] = eip;
-      emu._eipRingIdx = (emu._eipRingIdx + 1) & (emu._eipRing.length - 1);
-      if (emu._eipRingIdx === 0) emu._eipRingFull = true;
-    }
     emu.cpu.step();
     if (emu.cpu.halted) {
       const hBytes: string[] = [];
@@ -622,7 +604,7 @@ export function emuTick(emu: Emulator): void {
         );
         emu.haltReason = 'access violation';
         emu.halted = true;
-        console.log(`[DEBUG] WILD EIP: ring idx=${emu._eipRingIdx} full=${emu._eipRingFull}`);
+        // WILD EIP detected
         break;
       }
     }
@@ -653,7 +635,6 @@ export function emuTick(emu: Emulator): void {
   } else if (emu.waitingForMessage) {
     // Idle — waiting for input or message
   } else if (emu.halted) {
-    emu.dumpTrace();
     if (emu.exitedNormally) {
       emu.onExit?.();
     } else if (!emu._crashFired) {

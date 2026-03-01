@@ -1271,7 +1271,13 @@ function loadNEDlls(emu: Emulator): void {
     const dll = loadedDlls.get(info.dll);
     if (!dll) continue;
 
-    const entry = dll.entryPoints.get(info.ordinal);
+    let ordinal = info.ordinal;
+    // Resolve named imports (ordinal=0) via the DLL's resident name table
+    if (ordinal === 0 && info.name) {
+      const resolved = dll.nameToOrdinal.get(info.name.toUpperCase());
+      if (resolved !== undefined) ordinal = resolved;
+    }
+    const entry = dll.entryPoints.get(ordinal);
     if (!entry) {
       console.warn(`[NE DLL] ${info.dll}:ord_${info.ordinal} not found in DLL entry table`);
       continue;

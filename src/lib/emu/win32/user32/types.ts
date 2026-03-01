@@ -1,6 +1,7 @@
 export interface WndClassInfo {
   style: number;
   wndProc: number;
+  rawWndProc?: number;
   cbClsExtra: number;
   cbWndExtra: number;
   hInstance: number;
@@ -17,6 +18,7 @@ export interface WindowInfo {
   hwnd: number;
   classInfo: WndClassInfo;
   wndProc: number;
+  rawWndProc?: number;
   parent: number;
   x: number;
   y: number;

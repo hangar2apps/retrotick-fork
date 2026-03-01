@@ -6,6 +6,64 @@ import type { Win16UserHelpers } from './index';
 // Win16 USER module — Window creation & properties
 // Ordinal mappings from Wine's user.exe16.spec
 
+// Build a Win16 CREATESTRUCT on the stack and return its linear address.
+// Win16 CREATESTRUCT layout (34 bytes):
+//   +0:  lpCreateParams (4, far ptr)
+//   +4:  hInstance      (2)
+//   +6:  hMenu          (2)
+//   +8:  hwndParent     (2)
+//   +10: cy             (2)
+//   +12: cx             (2)
+//   +14: y              (2)
+//   +16: x              (2)
+//   +18: style          (4, LONG)
+//   +22: lpszName       (4, far ptr)
+//   +26: lpszClass      (4, far ptr)
+//   +30: dwExStyle      (4)
+function buildCreateStruct16(
+  emu: Emulator, lpCreateParams: number, hInstance: number, hMenu: number,
+  hWndParent: number, cy: number, cx: number, y: number, x: number,
+  style: number, lpszName: number, lpszClass: number, exStyle: number,
+): number {
+  // Build CREATESTRUCT on the stack (SS == DS in Win16 DGROUP).
+  // Don't use allocLocal — it permanently consumes heap space and conflicts
+  // with the app's own local heap allocations starting at the heap base.
+  // Allocate CREATESTRUCT on the stack by decrementing SP.
+  // Don't use allocLocal — it permanently consumes heap space and can
+  // overwrite the app's own local heap data at the heap start.
+  // SP will be restored by the caller after WM_NCCREATE/WM_CREATE dispatch.
+  const sp = emu.cpu.reg[4] & 0xFFFF;
+  const dsOffset = (sp - 36) & 0xFFFF; // 34 bytes + 2 alignment
+  emu.cpu.reg[4] = (emu.cpu.reg[4] & 0xFFFF0000) | dsOffset;
+  const dsBase = emu.cpu.segBase(emu.cpu.ss); // SS == DS in DGROUP
+  const addr = dsBase + dsOffset;
+  emu.memory.writeU32(addr, lpCreateParams);
+  emu.memory.writeU16(addr + 4, hInstance);
+  emu.memory.writeU16(addr + 6, hMenu);
+  emu.memory.writeU16(addr + 8, hWndParent);
+  emu.memory.writeU16(addr + 10, cy & 0xFFFF);
+  emu.memory.writeU16(addr + 12, cx & 0xFFFF);
+  emu.memory.writeU16(addr + 14, y & 0xFFFF);
+  emu.memory.writeU16(addr + 16, x & 0xFFFF);
+  emu.memory.writeU32(addr + 18, style);
+  emu.memory.writeU32(addr + 22, lpszName);
+  emu.memory.writeU32(addr + 26, lpszClass);
+  emu.memory.writeU32(addr + 30, exStyle);
+  return dsOffset; // Return DS offset (near pointer for 16-bit code)
+}
+
+// Send WM_NCCREATE and WM_CREATE to the window's wndProc with a valid CREATESTRUCT.
+function sendCreateMessages16(
+  emu: Emulator, wndProc: number, hwnd: number, createStructDsOffset: number,
+): void {
+  const WM_NCCREATE = 0x0081;
+  const WM_CREATE = 0x0001;
+  // lParam must be a far pointer (DS:offset) packed as seg<<16 | offset
+  const lParam = (emu.cpu.ds << 16) | (createStructDsOffset & 0xFFFF);
+  emu.callWndProc16(wndProc, hwnd, WM_NCCREATE, 0, lParam);
+  emu.callWndProc16(wndProc, hwnd, WM_CREATE, 0, lParam);
+}
+
 export function registerWin16UserWindow(emu: Emulator, user: Win16Module, h: Win16UserHelpers): void {
   // ───────────────────────────────────────────────────────────────────────────
   // Ordinal 41: CreateWindow — 30 bytes
@@ -34,7 +92,7 @@ export function registerWin16UserWindow(emu: Emulator, user: Win16Module, h: Win
       console.log(`[WIN16] CreateWindow: auto-loading menu from class menuName=0x${classInfo.menuName.toString(16)}`);
     }
     const hwnd = emu.handles.alloc('window', {
-      classInfo: classInfo || { className, wndProc: 0, style: 0, hbrBackground: 0, hIcon: 0, hCursor: 0, cbWndExtra: 0 },
+      classInfo: classInfo || { className, wndProc: 0, rawWndProc: 0, style: 0, hbrBackground: 0, hIcon: 0, hCursor: 0, cbWndExtra: 0 },
       title: windowName,
       style: dwStyle,
       exStyle: 0,
@@ -45,6 +103,7 @@ export function registerWin16UserWindow(emu: Emulator, user: Win16Module, h: Win
       hMenu: effectiveMenu,
       parent: hWndParent,
       wndProc: classInfo?.wndProc || 0,
+      rawWndProc: classInfo?.rawWndProc || 0,
       visible: !!(dwStyle & 0x10000000),
       extraBytes: new Uint8Array(classInfo?.cbWndExtra || 0),
       children: new Map(),
@@ -56,7 +115,15 @@ export function registerWin16UserWindow(emu: Emulator, user: Win16Module, h: Win
     }
 
     if (classInfo?.wndProc) {
-      emu.callWndProc16(classInfo.wndProc, hwnd, 0x0001, 0, 0);
+      const savedSP = emu.cpu.reg[4] & 0xFFFF;
+      const cs = buildCreateStruct16(emu, emu.readArg16DWord(0), hInstance, hMenu, hWndParent,
+        height, w, y, x, dwStyle, emu.readArg16DWord(22), emu.readArg16DWord(26), 0);
+      if (cs) {
+        sendCreateMessages16(emu, classInfo.wndProc, hwnd, cs);
+      } else {
+        emu.callWndProc16(classInfo.wndProc, hwnd, 0x0001, 0, 0);
+      }
+      emu.cpu.reg[4] = (emu.cpu.reg[4] & 0xFFFF0000) | savedSP;
     }
 
     if (hWndParent === emu.mainWindow && emu.mainWindow && emu.canvas && emu.ne) {
@@ -103,6 +170,14 @@ export function registerWin16UserWindow(emu: Emulator, user: Win16Module, h: Win
     return wasVisible ? 1 : 0;
   });
 
+  // Ordinal 43: CloseWindow(hWnd) — 2 bytes (minimizes the window)
+  user.register('ord_43', 2, () => {
+    const [hWnd] = emu.readPascalArgs16([2]);
+    const wnd = emu.handles.get<WindowInfo>(hWnd);
+    if (wnd) wnd.minimized = true;
+    return 0;
+  });
+
   // Ordinal 44: OpenIcon(hWnd) — 2 bytes
   user.register('ord_44', 2, () => 1);
 
@@ -120,7 +195,9 @@ export function registerWin16UserWindow(emu: Emulator, user: Win16Module, h: Win
   // ───────────────────────────────────────────────────────────────────────────
   user.register('ord_47', 2, () => {
     const hWnd = emu.readArg16(0);
-    return emu.handles.getType(hWnd) === 'window' ? 1 : 0;
+    const result = emu.handles.getType(hWnd) === 'window' ? 1 : 0;
+    console.log(`[WIN16] IsWindow(0x${hWnd.toString(16)}) → ${result}`);
+    return result;
   });
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -209,7 +286,8 @@ export function registerWin16UserWindow(emu: Emulator, user: Win16Module, h: Win
     const lpWndClass = h.readFarPtr(0);
     if (lpWndClass) {
       const style = emu.memory.readU16(lpWndClass);
-      const wndProc = h.resolveFarPtr(emu.memory.readU32(lpWndClass + 2));
+      const rawWndProc = emu.memory.readU32(lpWndClass + 2);
+      const wndProc = h.resolveFarPtr(rawWndProc);
       const cbClsExtra = emu.memory.readU16(lpWndClass + 6);
       const cbWndExtra = emu.memory.readU16(lpWndClass + 8);
       const hInstance = emu.memory.readU16(lpWndClass + 10);
@@ -220,11 +298,12 @@ export function registerWin16UserWindow(emu: Emulator, user: Win16Module, h: Win
       const lpszClassName = h.resolveFarPtr(emu.memory.readU32(lpWndClass + 22));
 
       const className = lpszClassName ? emu.memory.readCString(lpszClassName) : 'UNKNOWN';
-      console.log(`[WIN16] RegisterClass "${className}" wndProc=0x${wndProc.toString(16)}`);
+      console.log(`[WIN16] RegisterClass "${className}" wndProc=0x${wndProc.toString(16)} raw=0x${rawWndProc.toString(16)}`);
 
       emu.windowClasses.set(className.toUpperCase(), {
         className,
         wndProc,
+        rawWndProc,
         style,
         cbClsExtra: 0,
         cbWndExtra,
@@ -281,7 +360,28 @@ export function registerWin16UserWindow(emu: Emulator, user: Win16Module, h: Win
     const [hWnd, nIndex] = emu.readPascalArgs16([2, 2]);
     const wnd = emu.handles.get<WindowInfo>(hWnd);
     const signedIndex = (nIndex << 16) >> 16;
-    if (signedIndex === -4 && wnd) return wnd.wndProc || 0;
+    if (signedIndex === -4 && wnd) {
+      const raw = wnd.rawWndProc || wnd.wndProc || 0;
+      // Debug: dump thunk bytes at the far pointer
+      const off = raw & 0xFFFF;
+      const seg = (raw >>> 16) & 0xFFFF;
+      if (seg) {
+        const base = emu.cpu.segBases.get(seg);
+        if (base !== undefined) {
+          const lin = base + off;
+          const bytes = [];
+          for (let i = 0; i < 8; i++) bytes.push(emu.memory.readU8(lin + i).toString(16).padStart(2, '0'));
+          const dispatchBytes = [];
+          for (let i = 0; i < 32; i++) dispatchBytes.push(emu.memory.readU8(base + i).toString(16).padStart(2, '0'));
+          console.log(`[WIN16] GetWindowLong(0x${hWnd.toString(16)}, GWL_WNDPROC) → 0x${raw.toString(16)} seg=0x${seg.toString(16)} base=0x${base.toString(16)} lin=0x${lin.toString(16)} bytes=[${bytes.join(' ')}] dispatch@+2=[${dispatchBytes.join(' ')}]`);
+        } else {
+          console.log(`[WIN16] GetWindowLong(0x${hWnd.toString(16)}, GWL_WNDPROC) → 0x${raw.toString(16)} seg=0x${seg.toString(16)} NO BASE`);
+        }
+      } else {
+        console.log(`[WIN16] GetWindowLong(0x${hWnd.toString(16)}, GWL_WNDPROC) → 0x${raw.toString(16)}`);
+      }
+      return raw;
+    }
     if (signedIndex === -16 && wnd) return wnd.style || 0;
     if (signedIndex === -20 && wnd) return wnd.exStyle || 0;
     if (wnd && wnd.extraBytes && nIndex >= 0 && nIndex + 4 <= wnd.extraBytes.length) {
@@ -298,7 +398,7 @@ export function registerWin16UserWindow(emu: Emulator, user: Win16Module, h: Win
     const wnd = emu.handles.get<WindowInfo>(hWnd);
     const signedIndex = (nIndex << 16) >> 16;
     let old = 0;
-    if (signedIndex === -4 && wnd) { old = wnd.wndProc || 0; wnd.wndProc = dwNewLong; }
+    if (signedIndex === -4 && wnd) { old = wnd.rawWndProc || wnd.wndProc || 0; wnd.rawWndProc = dwNewLong; wnd.wndProc = h.resolveFarPtr(dwNewLong); console.log(`[WIN16] SetWindowLong(0x${hWnd.toString(16)}, GWL_WNDPROC, 0x${dwNewLong.toString(16)}) old=0x${old.toString(16)}`); }
     else if (signedIndex === -16 && wnd) { old = wnd.style || 0; wnd.style = dwNewLong; }
     else if (wnd && wnd.extraBytes && nIndex >= 0 && nIndex + 4 <= wnd.extraBytes.length) {
       old = wnd.extraBytes[nIndex] | (wnd.extraBytes[nIndex+1]<<8) | (wnd.extraBytes[nIndex+2]<<16) | (wnd.extraBytes[nIndex+3]<<24);
@@ -386,7 +486,7 @@ export function registerWin16UserWindow(emu: Emulator, user: Win16Module, h: Win
 
     const classInfo = emu.windowClasses.get(className.toUpperCase());
     const hwnd = emu.handles.alloc('window', {
-      classInfo: classInfo || { className, wndProc: 0, style: 0, hbrBackground: 0, hIcon: 0, hCursor: 0, cbWndExtra: 0 },
+      classInfo: classInfo || { className, wndProc: 0, rawWndProc: 0, style: 0, hbrBackground: 0, hIcon: 0, hCursor: 0, cbWndExtra: 0 },
       title: windowName,
       style: dwStyle,
       exStyle: dwExStyle,
@@ -397,6 +497,7 @@ export function registerWin16UserWindow(emu: Emulator, user: Win16Module, h: Win
       hMenu,
       parent: hWndParent,
       wndProc: classInfo?.wndProc || 0,
+      rawWndProc: classInfo?.rawWndProc || 0,
       visible: !!(dwStyle & 0x10000000),
       extraBytes: new Uint8Array(classInfo?.cbWndExtra || 0),
       children: new Map(),
@@ -408,7 +509,15 @@ export function registerWin16UserWindow(emu: Emulator, user: Win16Module, h: Win
     }
 
     if (classInfo?.wndProc) {
-      emu.callWndProc16(classInfo.wndProc, hwnd, 0x0001, 0, 0);
+      const savedSP = emu.cpu.reg[4] & 0xFFFF;
+      const cs = buildCreateStruct16(emu, emu.readArg16DWord(0), hInstance, hMenu, hWndParent,
+        height, w, y, x, dwStyle, emu.readArg16DWord(22), emu.readArg16DWord(26), dwExStyle);
+      if (cs) {
+        sendCreateMessages16(emu, classInfo.wndProc, hwnd, cs);
+      } else {
+        emu.callWndProc16(classInfo.wndProc, hwnd, 0x0001, 0, 0);
+      }
+      emu.cpu.reg[4] = (emu.cpu.reg[4] & 0xFFFF0000) | savedSP;
     }
 
     return hwnd;

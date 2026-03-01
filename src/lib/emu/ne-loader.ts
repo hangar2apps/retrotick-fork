@@ -36,6 +36,7 @@ export interface LoadedNE {
   stackSize: number;           // stack size from NE header
   thunkAddrEnd: number;        // next free thunk address after this module
   entryPoints: Map<number, { seg: number; offset: number }>; // ordinal → {seg, offset}
+  nameToOrdinal: Map<string, number>; // export name (uppercase) → ordinal
   nextSelector: number;        // next available selector after this module
   flags: number;               // NE header flags
 }
@@ -74,6 +75,7 @@ export function loadNE(arrayBuffer: ArrayBuffer, memory: Memory, opts?: LoadNEOp
   const segTableCount = dv.getUint16(neOffset + 0x1C, true);
   const modRefCount = dv.getUint16(neOffset + 0x1E, true);
   const nonResNameTableSize = dv.getUint16(neOffset + 0x20, true);
+  const nonResNameTableOffset = dv.getUint32(neOffset + 0x2C, true); // absolute file offset
   const segTableOffset = dv.getUint16(neOffset + 0x22, true); // relative to NE header
   const resourceTableOffset = dv.getUint16(neOffset + 0x24, true);
   const residentNameTableOffset = dv.getUint16(neOffset + 0x26, true);
@@ -233,6 +235,40 @@ export function loadNE(arrayBuffer: ArrayBuffer, memory: Memory, opts?: LoadNEOp
           ordinal++;
         }
       }
+    }
+  }
+
+  // Parse resident name table → name→ordinal map
+  const nameToOrdinal = new Map<string, number>();
+  {
+    let pos = neOffset + residentNameTableOffset;
+    while (pos < data.length) {
+      const len = data[pos];
+      if (len === 0) break;
+      pos++;
+      let name = '';
+      for (let i = 0; i < len; i++) name += String.fromCharCode(data[pos + i]);
+      pos += len;
+      const ord = dv.getUint16(pos, true);
+      pos += 2;
+      if (ord !== 0) nameToOrdinal.set(name.toUpperCase(), ord);
+    }
+  }
+
+  // Parse non-resident name table → also adds to nameToOrdinal
+  if (nonResNameTableOffset > 0 && nonResNameTableSize > 0) {
+    let pos = nonResNameTableOffset;
+    const end = pos + nonResNameTableSize;
+    while (pos < end && pos < data.length) {
+      const len = data[pos];
+      if (len === 0) break;
+      pos++;
+      let name = '';
+      for (let i = 0; i < len; i++) name += String.fromCharCode(data[pos + i]);
+      pos += len;
+      const ord = dv.getUint16(pos, true);
+      pos += 2;
+      if (ord !== 0) nameToOrdinal.set(name.toUpperCase(), ord);
     }
   }
 
@@ -409,6 +445,7 @@ export function loadNE(arrayBuffer: ArrayBuffer, memory: Memory, opts?: LoadNEOp
     stackSize,
     thunkAddrEnd: thunkAddr,
     entryPoints,
+    nameToOrdinal,
     nextSelector: nextSel,
     flags,
   };

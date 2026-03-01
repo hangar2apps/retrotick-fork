@@ -210,13 +210,34 @@ export function registerKernelMemory(kernel: Win16Module, emu: Emulator, state: 
   // ---- Selector management ----
 
   // --- Ordinal 170: AllocCStoDSAlias(selector) — 2 bytes (word) ---
-  kernel.register('ord_170', 2, () => emu.cpu.ds);
+  // Creates a writable data selector aliasing the given code selector
+  kernel.register('ord_170', 2, () => {
+    const srcSel = emu.readArg16(0);
+    const base = emu.cpu.segBases.get(srcSel);
+    const newSel = state.nextGlobalSelector++;
+    emu.cpu.segBases.set(newSel, base ?? 0);
+    console.log(`[KERNEL16] AllocCStoDSAlias(0x${srcSel.toString(16)}) → 0x${newSel.toString(16)} base=0x${(base??0).toString(16)}`);
+    return newSel;
+  });
 
   // --- Ordinal 171: AllocDStoCSAlias(word) — 2 bytes ---
-  kernel.register('ord_171', 2, () => emu.cpu.cs);
+  // Creates an executable code selector aliasing the given data selector
+  kernel.register('ord_171', 2, () => {
+    const srcSel = emu.readArg16(0);
+    const base = emu.cpu.segBases.get(srcSel);
+    const newSel = state.nextGlobalSelector++;
+    emu.cpu.segBases.set(newSel, base ?? 0);
+    return newSel;
+  });
 
   // --- Ordinal 172: AllocAlias(word) — 2 bytes ---
-  kernel.register('ord_172', 2, () => emu.cpu.ds);
+  kernel.register('ord_172', 2, () => {
+    const srcSel = emu.readArg16(0);
+    const base = emu.cpu.segBases.get(srcSel);
+    const newSel = state.nextGlobalSelector++;
+    emu.cpu.segBases.set(newSel, base ?? 0);
+    return newSel;
+  });
 
   // --- Ordinal 175: AllocSelector(word) — 2 bytes ---
   kernel.register('ord_175', 2, () => {
@@ -229,8 +250,12 @@ export function registerKernelMemory(kernel: Win16Module, emu: Emulator, state: 
   kernel.register('ord_176', 2, () => 0);
 
   // --- Ordinal 177: PrestoChangoSelector(word word) — 4 bytes ---
+  // Copies descriptor from srcSel to dstSel, toggling code/data attribute
   kernel.register('ord_177', 4, () => {
     const [srcSel, dstSel] = emu.readPascalArgs16([2, 2]);
+    const base = emu.cpu.segBases.get(srcSel);
+    if (base !== undefined) emu.cpu.segBases.set(dstSel, base);
+    console.log(`[KERNEL16] PrestoChangoSelector(src=0x${srcSel.toString(16)}, dst=0x${dstSel.toString(16)}) base=0x${(base??0).toString(16)}`);
     return dstSel;
   });
 

@@ -99,10 +99,6 @@ export function registerProcess(emu: Emulator): void {
       }
     }
 
-    // Dump the thunk trace and EIP trace to see what happened BEFORE the exception
-    console.log(`[SEH] === Trace leading up to RaiseException ===`);
-    emu.dumpTrace();
-
     // Read the thunk return address (the address RaiseException would return to)
     const retAddr = emu.memory.readU32(emu.cpu.reg[4] >>> 0);
 
