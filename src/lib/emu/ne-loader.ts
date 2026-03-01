@@ -371,8 +371,10 @@ export function loadNE(arrayBuffer: ArrayBuffer, memory: Memory, opts?: LoadNEOp
       const baseAlloc = ssSegInfo.minAlloc === 0 ? 0x10000 : ssSegInfo.minAlloc;
       const dataSize = Math.max(baseAlloc, ssSegInfo.fileSize);
       if (entrySS === autoDataSeg) {
-        // Auto-data segment: include heap + stack space
-        entrySP = (dataSize + heapSize + stackSize) & 0xFFFF;
+        // Auto-data segment: place stack at top of 64KB segment
+        // so the heap can grow freely between static data and stack bottom.
+        // Windows 3.x allows DGROUP to expand up to 64KB.
+        entrySP = 0xFFFE; // top of 64KB, word-aligned
       } else {
         entrySP = dataSize & 0xFFFF;
       }

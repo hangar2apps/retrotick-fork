@@ -852,7 +852,22 @@ export class Emulator {
 
     // Fall back to default DGROUP local heap
     const addr = this.localHeapPtr;
-    if (addr + aligned > this.localHeapEnd) return 0; // out of memory
+    if (addr + aligned > this.localHeapEnd) {
+      // Auto-grow heap within the 64KB segment, like Windows 3.x
+      // If SS == DS, heap must not collide with stack (grows down from top)
+      const dsBase = this.ne ? (this.cpu.segBases.get(this.cpu.ds) ?? 0) : 0;
+      let maxEnd = dsBase + 0x10000;
+      if (this.ne) {
+        const ssBase = this.cpu.segBases.get(this.cpu.ss) ?? 0;
+        if (ssBase === dsBase && this.ne.stackSize > 0) {
+          // Stack bottom = stackTop - stackSize; leave 256-byte guard
+          const stackBottom = this.ne.stackTop - this.ne.stackSize;
+          maxEnd = Math.min(maxEnd, stackBottom - 256);
+        }
+      }
+      if (addr + aligned > maxEnd) return 0; // truly out of memory
+      this.localHeapEnd = addr + aligned;
+    }
     this.localHeapPtr += aligned;
     for (let i = 0; i < aligned; i++) this.memory.writeU8(addr + i, 0);
     return addr & 0xFFFF; // return offset within segment
