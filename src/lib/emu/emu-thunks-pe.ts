@@ -50,6 +50,22 @@ export function buildThunkTable(emu: Emulator): void {
   // DLL name aliases (map old names to canonical names used in API registration)
   const dllAliases: Record<string, string> = {
     'WSOCK32.DLL': 'WS2_32.DLL',
+    'API-MS-WIN-CRT-RUNTIME-L1-1-0.DLL': 'MSVCRT.DLL',
+    'API-MS-WIN-CRT-STDIO-L1-1-0.DLL': 'MSVCRT.DLL',
+    'API-MS-WIN-CRT-STRING-L1-1-0.DLL': 'MSVCRT.DLL',
+    'API-MS-WIN-CRT-MATH-L1-1-0.DLL': 'MSVCRT.DLL',
+    'API-MS-WIN-CRT-HEAP-L1-1-0.DLL': 'MSVCRT.DLL',
+    'API-MS-WIN-CRT-LOCALE-L1-1-0.DLL': 'MSVCRT.DLL',
+    'API-MS-WIN-CRT-CONVERT-L1-1-0.DLL': 'MSVCRT.DLL',
+    'API-MS-WIN-CRT-ENVIRONMENT-L1-1-0.DLL': 'MSVCRT.DLL',
+    'API-MS-WIN-CRT-TIME-L1-1-0.DLL': 'MSVCRT.DLL',
+    'API-MS-WIN-CRT-FILESYSTEM-L1-1-0.DLL': 'MSVCRT.DLL',
+    'API-MS-WIN-CRT-UTILITY-L1-1-0.DLL': 'MSVCRT.DLL',
+    'API-MS-WIN-CRT-MULTIBYTE-L1-1-0.DLL': 'MSVCRT.DLL',
+    'API-MS-WIN-CRT-CONIO-L1-1-0.DLL': 'MSVCRT.DLL',
+    'API-MS-WIN-CRT-PROCESS-L1-1-0.DLL': 'MSVCRT.DLL',
+    'UCRTBASE.DLL': 'MSVCRT.DLL',
+    'VCRUNTIME140.DLL': 'MSVCRT.DLL',
   };
 
   // MSVCRT uses cdecl (caller cleans stack), so nArgs=0 is correct for them
@@ -57,6 +73,7 @@ export function buildThunkTable(emu: Emulator): void {
     'MSVCRT.DLL', 'MSVCRT20.DLL', 'MSVCRT40.DLL',
     'MSVCR70.DLL', 'MSVCR71.DLL', 'MSVCR80.DLL', 'MSVCR90.DLL',
     'MSVCR100.DLL', 'MSVCR110.DLL', 'MSVCR120.DLL',
+    'UCRTBASE.DLL', 'VCRUNTIME140.DLL',
   ]);
 
   for (const [addr, info] of emu.pe.apiMap) {

@@ -384,7 +384,6 @@ export function registerMisc(emu: Emulator): void {
   });
 
   user32.register('FindWindowA', 2, () => 0); // not found
-  user32.register('FindWindowW', 2, () => 0); // not found
   user32.register('FindWindowExA', 4, () => 0); // not found
   user32.register('EnumDisplaySettingsA', 3, () => 0); // fail
   user32.register('EnumDisplaySettingsW', 3, () => 0); // fail

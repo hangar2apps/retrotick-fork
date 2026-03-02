@@ -67,6 +67,8 @@ export function registerMsvcrt(emu: Emulator): void {
   msvcrt.register('_beginthreadex', 0, () => 0xBEEF0001);
 
   msvcrt.register('__set_app_type', 0, () => 0);
+  msvcrt.register('_set_app_type', 0, () => 0);
+  msvcrt.register('_set_fmode', 0, () => 0);
   msvcrt.register('__setusermatherr', 0, () => 0);
   msvcrt.register('_adjust_fdiv', 0, () => 0);
   msvcrt.register('_controlfp', 0, () => 0);
@@ -671,6 +673,9 @@ export function registerMsvcrt(emu: Emulator): void {
   // atexit(void (*func)(void)) — register exit handler
   // We don't actually call them, just return 0 (success)
   msvcrt.register('atexit', 0, () => 0);
+  msvcrt.register('_crt_atexit', 0, () => 0);
+  msvcrt.register('_configure_narrow_argv', 0, () => 0);
+  msvcrt.register('_configure_wide_argv', 0, () => 0);
 
   // puts(const char* str) — write string + newline to stdout
   msvcrt.register('puts', 0, () => {
@@ -1238,6 +1243,32 @@ export function registerMsvcrt(emu: Emulator): void {
     const str = emu.memory.readCString(emu.readArg(0));
     return parseInt(str, 10) || 0;
   });
+
+  // strtol / strtoul / wcstol
+  const strtolImpl = (readStr: (addr: number) => string, charSize: number) => {
+    const nptr = emu.readArg(0);
+    const endptrPtr = emu.readArg(1);
+    const base = emu.readArg(2);
+    const str = readStr(nptr);
+    // Find how many chars are consumed
+    const trimmed = str.replace(/^\s+/, '');
+    const leadingSpaces = str.length - trimmed.length;
+    let parsed = parseInt(trimmed, base || 10);
+    if (isNaN(parsed)) parsed = 0;
+    // Find end position: parseInt stops at first invalid char
+    // Use a regex to find the consumed portion
+    let consumed = 0;
+    const match = trimmed.match(/^[+-]?(?:0[xX][\da-fA-F]+|0[0-7]*|[1-9]\d*|0)/);
+    if (match) consumed = match[0].length;
+    if (endptrPtr) {
+      emu.memory.writeU32(endptrPtr, nptr + (leadingSpaces + consumed) * charSize);
+    }
+    return parsed | 0;
+  };
+
+  msvcrt.register('strtol', 0, () => strtolImpl(a => emu.memory.readCString(a), 1));
+  msvcrt.register('strtoul', 0, () => strtolImpl(a => emu.memory.readCString(a), 1) >>> 0);
+  msvcrt.register('wcstol', 0, () => strtolImpl(a => emu.memory.readUTF16String(a), 2));
 
   // fopen — return NULL (file not found)
   msvcrt.register('fopen', 0, () => 0);

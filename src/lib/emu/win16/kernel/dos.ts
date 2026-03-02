@@ -31,6 +31,7 @@ export function registerKernelDos(kernel: Win16Module, emu: Emulator, state: Ker
       return 0;
     }
     if (ah === 0x4C) {
+      emu.exitedNormally = true;
       emu.halted = true;
     } else if (ah === 0x2A) {
       const now = new Date();

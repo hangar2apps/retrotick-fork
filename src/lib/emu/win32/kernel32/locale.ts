@@ -399,9 +399,6 @@ export function registerLocale(emu: Emulator): void {
   // EnumSystemCodePagesW: just return TRUE without calling callback
   kernel32.register('EnumSystemCodePagesW', 2, () => 1);
 
-  // GetConsoleCP: return code page 437
-  kernel32.register('GetConsoleCP', 0, () => 437);
-
   // MulDiv(a, b, c) = (a * b) / c with 64-bit intermediate
   kernel32.register('MulDiv', 3, () => {
     const a = emu.readArg(0) | 0;

@@ -554,12 +554,6 @@ export function registerText(emu: Emulator): void {
   });
 
   user32.register('OemToCharA', 2, () => 1);
-  user32.register('CharLowerA', 1, () => {
-    const p = emu.readArg(0);
-    // If high word is 0, it's a char; otherwise pointer to string
-    if (p < 0x10000) return (p >= 0x41 && p <= 0x5A) ? p + 0x20 : p;
-    return p;
-  });
 
   user32.register('CharUpperA', 1, () => {
     const p = emu.readArg(0);

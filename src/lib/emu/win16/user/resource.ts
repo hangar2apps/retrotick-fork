@@ -21,13 +21,17 @@ export function registerWin16UserResource(emu: Emulator, user: Win16Module, h: W
     const [hInstance, lpBitmapName] = emu.readPascalArgs16([2, 4]);
     const seg = (lpBitmapName >>> 16) & 0xFFFF;
     const off = lpBitmapName & 0xFFFF;
-    const bmpId = (seg === 0) ? off : 0;
-    const ssBase = emu.cpu.segBase(emu.cpu.ss);
-    const sp = emu.cpu.reg[4] & 0xFFFF;
-    const retIP = emu.memory.readU16(ssBase + sp);
-    const retCS = emu.memory.readU16(ssBase + sp + 2);
-    console.log(`[WIN16] LoadBitmap hInst=0x${hInstance.toString(16)} bmpId=${bmpId} caller=seg${retCS}:0x${retIP.toString(16)}`);
-    return emu.loadBitmapResource(bmpId) || (bmpId || 1);
+    if (seg === 0) {
+      // Integer resource ID
+      console.log(`[WIN16] LoadBitmap hInst=0x${hInstance.toString(16)} id=${off}`);
+      return emu.loadBitmapResource(off) || off || 1;
+    } else {
+      // Far pointer to string name
+      const linear = emu.resolveFarPtr(lpBitmapName);
+      const name = emu.memory.readCString(linear);
+      console.log(`[WIN16] LoadBitmap hInst=0x${hInstance.toString(16)} name="${name}"`);
+      return emu.loadBitmapResourceByName(name) || 1;
+    }
   });
 
   // ───────────────────────────────────────────────────────────────────────────

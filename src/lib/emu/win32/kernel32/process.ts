@@ -281,7 +281,6 @@ export function registerProcess(emu: Emulator): void {
       default:                                   return 0;
     }
   });
-  kernel32.register('SetConsoleCtrlHandler', 2, () => 1);
   kernel32.register('SetErrorMode', 1, () => 0);
   kernel32.register('GetErrorMode', 0, () => 0);
   const CREATE_SUSPENDED = 0x00000004;

@@ -2,6 +2,20 @@ import type { Emulator } from '../emulator';
 import type { DCInfo, BitmapInfo, BrushInfo, PenInfo, PaletteInfo } from '../win32/gdi32/types';
 import { OPAQUE } from '../win32/types';
 import { fillTextBitmap } from '../emu-render';
+import { decodeDib } from '../../pe/decode-dib';
+
+function bresenhamLine(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number): void {
+  const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+  let err = dx - dy;
+  while (true) {
+    ctx.fillRect(x0, y0, 1, 1);
+    if (x0 === x1 && y0 === y1) break;
+    const e2 = 2 * err;
+    if (e2 > -dy) { err -= dy; x0 += sx; }
+    if (e2 < dx) { err += dx; y0 += sy; }
+  }
+}
 
 function colorToCSS(bgr: number): string {
   const r = bgr & 0xFF;
@@ -390,20 +404,71 @@ export function registerWin16Gdi(emu: Emulator): void {
 
   // Ordinal 19: LineTo(hdc, x, y) — pascal -ret16, 6 bytes
   gdi.register('ord_19', 6, () => {
-    const [hdc, x, y] = emu.readPascalArgs16([2, 2, 2]);
+    const [hdc, xRaw, yRaw] = emu.readPascalArgs16([2, 2, 2]);
+    const x = (xRaw << 16) >> 16;
+    const y = (yRaw << 16) >> 16;
     const dc = emu.getDC(hdc);
     if (dc) {
       const pen = emu.getPen(dc.selectedPen);
-      if (pen && pen.style !== PS_NULL) {
-        dc.ctx.strokeStyle = colorToCSS(pen.color);
-        dc.ctx.lineWidth = pen.width || 1;
-        dc.ctx.beginPath();
-        dc.ctx.moveTo(dc.penPosX + 0.5, dc.penPosY + 0.5);
-        dc.ctx.lineTo(x + 0.5, y + 0.5);
-        dc.ctx.stroke();
+      const rop2 = dc.rop2;
+      const R2_NOP = 11, R2_COPYPEN = 13, R2_WHITE = 16, R2_BLACK = 1;
+
+      if (rop2 === R2_NOP) {
+        // no drawing
+      } else if (rop2 === R2_WHITE) {
+        dc.ctx.fillStyle = '#ffffff';
+        bresenhamLine(dc.ctx, dc.penPosX, dc.penPosY, x, y);
+      } else if (rop2 === R2_BLACK) {
+        dc.ctx.fillStyle = '#000000';
+        bresenhamLine(dc.ctx, dc.penPosX, dc.penPosY, x, y);
+      } else if (rop2 === R2_COPYPEN) {
+        if (pen && pen.style !== PS_NULL) {
+          dc.ctx.fillStyle = colorToCSS(pen.color);
+          bresenhamLine(dc.ctx, dc.penPosX, dc.penPosY, x, y);
+        }
+      } else {
+        // All other ROP2 modes: per-pixel with dst read
+        let pr = 0, pg = 0, pb = 0;
+        if (pen) { pr = pen.color & 0xFF; pg = (pen.color >> 8) & 0xFF; pb = (pen.color >> 16) & 0xFF; }
+        const cw = dc.canvas.width || 1, ch = dc.canvas.height || 1;
+        const imgData = dc.ctx.getImageData(0, 0, cw, ch);
+        const d = imgData.data;
+        let x0 = dc.penPosX, y0 = dc.penPosY, x1 = x, y1 = y;
+        const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+        const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+        let err = dx - dy;
+        while (true) {
+          if (x0 >= 0 && x0 < cw && y0 >= 0 && y0 < ch) {
+            const off = (y0 * cw + x0) * 4;
+            const dr = d[off], dg = d[off+1], db = d[off+2];
+            let rr: number, rg: number, rb: number;
+            switch (rop2) {
+              case 2:  rr = ~(dr|pr)&0xFF; rg = ~(dg|pg)&0xFF; rb = ~(db|pb)&0xFF; break; // R2_NOTMERGEPEN
+              case 3:  rr = dr&(~pr&0xFF); rg = dg&(~pg&0xFF); rb = db&(~pb&0xFF); break; // R2_MASKNOTPEN
+              case 4:  rr = ~pr&0xFF;      rg = ~pg&0xFF;      rb = ~pb&0xFF;      break; // R2_NOTCOPYPEN
+              case 5:  rr = pr&(~dr&0xFF); rg = pg&(~dg&0xFF); rb = pb&(~db&0xFF); break; // R2_MASKPENNOT
+              case 6:  rr = ~dr&0xFF;      rg = ~dg&0xFF;      rb = ~db&0xFF;      break; // R2_NOT
+              case 7:  rr = dr^pr;         rg = dg^pg;         rb = db^pb;         break; // R2_XORPEN
+              case 8:  rr = ~(dr&pr)&0xFF; rg = ~(dg&pg)&0xFF; rb = ~(db&pb)&0xFF; break; // R2_NOTMASKPEN
+              case 9:  rr = dr&pr;         rg = dg&pg;         rb = db&pb;         break; // R2_MASKPEN
+              case 10: rr = ~(dr^pr)&0xFF; rg = ~(dg^pg)&0xFF; rb = ~(db^pb)&0xFF; break; // R2_NOTXORPEN
+              case 12: rr = dr|(~pr&0xFF); rg = dg|(~pg&0xFF); rb = db|(~pb&0xFF); break; // R2_MERGENOTPEN
+              case 14: rr = pr|(~dr&0xFF); rg = pg|(~dg&0xFF); rb = pb|(~db&0xFF); break; // R2_MERGEPENNOT
+              case 15: rr = dr|pr;         rg = dg|pg;         rb = db|pb;         break; // R2_MERGEPEN
+              default: rr = pr; rg = pg; rb = pb; break;
+            }
+            d[off] = rr; d[off+1] = rg; d[off+2] = rb;
+          }
+          if (x0 === x1 && y0 === y1) break;
+          const e2 = 2 * err;
+          if (e2 > -dy) { err -= dy; x0 += sx; }
+          if (e2 < dx) { err += dx; y0 += sy; }
+        }
+        dc.ctx.putImageData(imgData, 0, 0);
       }
       dc.penPosX = x;
       dc.penPosY = y;
+      emu.syncDCToCanvas(hdc);
     }
     return 1;
   });
@@ -841,10 +906,22 @@ export function registerWin16Gdi(emu: Emulator): void {
       const bmp = emu.handles.get<BitmapInfo>(hObj);
       if (bmp && bmp.width && bmp.height && bmp.canvas) {
         const old = dc.selectedBitmap || hObj;
+        // Sync DC canvas content back to old bitmap before switching
+        if (old && old !== hObj) {
+          const oldBmp = emu.handles.get<BitmapInfo>(old);
+          if (oldBmp && oldBmp.canvas && dc.canvas.width > 0 && dc.canvas.height > 0) {
+            oldBmp.canvas.width = dc.canvas.width;
+            oldBmp.canvas.height = dc.canvas.height;
+            const oldCtx = oldBmp.canvas.getContext('2d')!;
+            oldCtx.drawImage(dc.canvas, 0, 0);
+            oldBmp.ctx = oldCtx;
+          }
+        }
         dc.selectedBitmap = hObj;
         dc.canvas.width = bmp.width;
         dc.canvas.height = bmp.height;
         dc.ctx = (dc.canvas as OffscreenCanvas).getContext('2d')!;
+        dc.ctx.imageSmoothingEnabled = false;
         dc.ctx.drawImage(bmp.canvas, 0, 0);
         return old;
       }
@@ -2052,6 +2129,31 @@ export function registerWin16Gdi(emu: Emulator): void {
       w = emu.memory.readU32(lpbmih + 4) || 1;
       h = Math.abs(emu.memory.readI32(lpbmih + 8)) || 1;
     }
+
+    const CBM_INIT = 0x4;
+    if ((fdwInit & CBM_INIT) && lpbInit && lpbmi) {
+      // Decode DIB data and create initialized bitmap
+      try {
+        const biSize = emu.memory.readU32(lpbmi);
+        const biBitCount = emu.memory.readU16(lpbmi + 14);
+        const biClrUsed = emu.memory.readU32(lpbmi + 32);
+        const nColors = biClrUsed > 0 ? biClrUsed : (biBitCount <= 8 ? (1 << biBitCount) : 0);
+        const headerSize = biSize + nColors * 4;
+        const absH = Math.abs(emu.memory.readI32(lpbmi + 8));
+        const stride = Math.floor((w * biBitCount + 31) / 32) * 4;
+        const imageSize = stride * absH;
+        // Build contiguous DIB buffer: header + color table + pixels
+        const dibBuf = new Uint8Array(headerSize + imageSize);
+        for (let i = 0; i < headerSize; i++) dibBuf[i] = emu.memory.readU8(lpbmi + i);
+        for (let i = 0; i < imageSize; i++) dibBuf[headerSize + i] = emu.memory.readU8(lpbInit + i);
+        const decoded = decodeDib(dibBuf);
+        const bmp: BitmapInfo = { width: decoded.width, height: decoded.height, canvas: decoded.canvas, ctx: decoded.ctx };
+        return emu.handles.alloc('bitmap', bmp);
+      } catch (e: unknown) {
+        console.warn(`[GDI16] CreateDIBitmap decode failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+
     const canvas = new OffscreenCanvas(w, h);
     const ctx = canvas.getContext('2d')!;
     const bmp: BitmapInfo = { width: w, height: h, canvas, ctx };
@@ -2561,18 +2663,6 @@ export function registerWin16Gdi(emu: Emulator): void {
   gdi.register('ord_376', 6, () => {
     return emu.readArg16(0); // return the hdc
   });
-
-  // Ordinal 377: StartDoc(hdc, lpdi) — pascal -ret16, 6 bytes (2+4)
-  gdi.register('ord_377', 6, () => 1);
-
-  // Ordinal 378: EndDoc(hdc) — pascal -ret16, 2 bytes
-  gdi.register('ord_378', 2, () => 1);
-
-  // Ordinal 379: StartPage(hdc) — pascal -ret16, 2 bytes
-  gdi.register('ord_379', 2, () => 1);
-
-  // Ordinal 380: EndPage(hdc) — pascal -ret16, 2 bytes
-  gdi.register('ord_380', 2, () => 1);
 
   // Ordinal 381: SetAbortProc(hdc, lpAbortProc) — pascal -ret16, 6 bytes (2+4)
   gdi.register('ord_381', 6, () => 1);

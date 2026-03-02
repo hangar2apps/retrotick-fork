@@ -232,6 +232,9 @@ export class Win32Dll {
 
   register(name: string, nArgs: number, handler: (emu: Emulator) => number | undefined): void {
     const key = `${this.dll}:${name}`;
+    if (this.emu.apiDefs.has(key)) {
+      throw new Error(`Win32Dll.register: duplicate API definition for ${key}`);
+    }
     const wrapped = (emu: Emulator) => {
       console.log(`[API] ${key}`);
       return handler(emu);
@@ -245,6 +248,9 @@ export class Win16Module {
 
   register(name: string, stackBytes: number, handler: (emu: Emulator) => number | undefined): void {
     const key = `${this.module}:${name}`;
+    if (this.emu.apiDefs.has(key)) {
+      throw new Error(`Win16Module.register: duplicate API definition for ${key}`);
+    }
     const wrapped = (emu: Emulator) => {
       console.log(`[API] ${key}`);
       return handler(emu);

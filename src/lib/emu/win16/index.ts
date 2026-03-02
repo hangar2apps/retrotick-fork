@@ -7,3 +7,4 @@ export { registerWin16Mmsystem } from './mmsystem';
 export { registerWin16Commdlg } from './commdlg';
 export { registerWin16Keyboard } from './keyboard';
 export { registerWin16Win87em } from './win87em';
+export { registerWin16Sound } from './sound';

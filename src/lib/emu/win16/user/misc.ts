@@ -637,7 +637,9 @@ export function registerWin16UserMisc(emu: Emulator, user: Win16Module, h: Win16
   // Ordinal 471: lstrcmpi(s1, s2) — 8 bytes (4+4)
   // ───────────────────────────────────────────────────────────────────────────
   user.register('ord_471', 8, () => {
-    const [s1, s2] = emu.readPascalArgs16([4, 4]);
+    const [s1Raw, s2Raw] = emu.readPascalArgs16([4, 4]);
+    const s1 = emu.resolveFarPtr(s1Raw);
+    const s2 = emu.resolveFarPtr(s2Raw);
     if (!s1 || !s2) return 0;
     let i = 0;
     while (true) {
@@ -652,12 +654,26 @@ export function registerWin16UserMisc(emu: Emulator, user: Win16Module, h: Win16
   });
 
   // ───────────────────────────────────────────────────────────────────────────
+  // Ordinal 472: AnsiNext(lpCurrentChar) — 4 bytes (segptr)
+  // ───────────────────────────────────────────────────────────────────────────
+  user.register('ord_472', 4, () => {
+    const raw = emu.readPascalArgs16([4])[0];
+    if (!raw) return 0;
+    const linear = emu.resolveFarPtr(raw);
+    // Advance past current char; if NUL, stay at NUL
+    if (emu.memory.readU8(linear) === 0) return raw;
+    // Increment offset portion of seg:off
+    return ((raw & 0xFFFF0000) | ((raw + 1) & 0xFFFF)) >>> 0;
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
   // Ordinal 473: AnsiPrev(lpStart, lpCurrent) — 8 bytes (4+4)
   // ───────────────────────────────────────────────────────────────────────────
   user.register('ord_473', 8, () => {
     const [lpStart, lpCurrent] = emu.readPascalArgs16([4, 4]);
     if (!lpStart || !lpCurrent || lpCurrent <= lpStart) return lpStart;
-    return lpCurrent - 1;
+    // Decrement offset portion of seg:off
+    return ((lpCurrent & 0xFFFF0000) | ((lpCurrent - 1) & 0xFFFF)) >>> 0;
   });
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -712,7 +728,7 @@ export function registerWin16UserMisc(emu: Emulator, user: Win16Module, h: Win16
   // Ordinal 36: GetWindowText(hWnd, lpString, nMaxCount) — 8 bytes (2+4+2)
   user.register('ord_36', 8, () => {
     const [hWnd, lpString, nMaxCount] = emu.readPascalArgs16([2, 4, 2]);
-    const win = emu.windows.get(hWnd);
+    const win = emu.handles.get<WindowInfo>(hWnd);
     const title = win?.title || '';
     if (lpString && nMaxCount > 0) {
       for (let i = 0; i < Math.min(title.length, nMaxCount - 1); i++) {

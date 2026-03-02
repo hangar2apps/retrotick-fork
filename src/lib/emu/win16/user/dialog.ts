@@ -49,6 +49,15 @@ export function registerWin16UserDialog(emu: Emulator, user: Win16Module, h: Win
   user.register('ord_94', 8, () => 1);
 
   // ───────────────────────────────────────────────────────────────────────────
+  // Ordinal 95: GetDlgItemInt(hDlg, nIDDlgItem, lpTranslated, bSigned) — 10 bytes
+  // ───────────────────────────────────────────────────────────────────────────
+  user.register('ord_95', 10, () => {
+    const [hDlg, nID, lpTranslated, bSigned] = emu.readPascalArgs16([2, 2, 4, 2]);
+    if (lpTranslated) emu.memory.writeU16(lpTranslated, 0); // FALSE = translation failed
+    return 0;
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
   // Ordinal 96: CheckRadioButton(hDlg, nFirst, nLast, nCheck) — 8 bytes
   // ───────────────────────────────────────────────────────────────────────────
   user.register('ord_96', 8, () => {
